@@ -24,6 +24,13 @@ import base64
 import httpx
 import traceback
 
+# Add nest_asyncio for proper async handling in FastAPI
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    nest_asyncio = None
+
 import tritonclient.http as httpclient
 from tritonclient.http import InferInput, InferRequestedOutput
 from ultralytics. trackers. bot_sort import BOTSORT
@@ -400,90 +407,52 @@ def clean_json(raw: str) -> str:
     return raw.strip()
 
 # =================================================
-# GPT VISION CALLS (from Jupyter notebook)
-async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count: int = 3) -> PPEAndVehicleStatus:
-    """
-    Call GPT Vision API in the same format as the working notebook.
-    Ensures SYSTEM_MESSAGES is populated and API_KEY is valid.
-    """
-    # Ensure SYSTEM_MESSAGES exists (defensive)
-    global SYSTEM_MESSAGES
-    if not SYSTEM_MESSAGES:
-        initialize_system_messages()
+# EVENT LOOP HELPER (from Jupyter notebook)
+# =================================================
+def run_coro(coro):
+    """Helper to run coroutine in existing or new event loop.
+    Works with nest_asyncio which allows run_until_complete in running loops."""
+    try:
+        loop = asyncio.get_event_loop()
+        # nest_asyncio allows this to work even if loop is running
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
+# =================================================
+# GPT VISION CALLS (from Jupyter notebook)
+# =================================================
+async def call_gpt_single(client: httpx.AsyncClient, image_b64: str) -> PPEAndVehicleStatus:
+    """
+    Call GPT Vision API - simplified single-try version like the notebook.
+    """
     user_content = [
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
     ]
 
-    last_err = None
-    for attempt in range(retry_count):
-        try:
-            payload = {
-                "model": MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_MESSAGES},
-                    {"role": "user", "content": user_content},
-                ],
-            }
-
-            resp = await client.post(
-                f"{API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=120,
-            )
-
-            # Retry on 429/5xx
-            if resp.status_code in (429, 500, 502, 503, 504):
-                last_err = resp.text
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                resp.raise_for_status()
-
-            # For 400, log and raise immediately
-            if resp.status_code == 400:
-                logger.error(f"GPT API 400 response body: {resp.text[:1000]}")
-                resp.raise_for_status()
-
-            resp.raise_for_status()
-
-            data = resp.json()
-            raw = data["choices"][0]["message"]["content"]
-
-            # Clean JSON fences
-            raw = raw.strip()
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.startswith("```"):
-                raw = raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            raw = raw.strip()
-
-            parsed = json.loads(raw)
-            logger.info(f"GPT response parsed successfully: {parsed}")
-            return PPEAndVehicleStatus(**parsed)
-
-        except Exception as e:
-            last_err = str(e)
-            logger.error(f"GPT call failed (attempt {attempt + 1}/{retry_count}): {last_err}")
-            if attempt < retry_count - 1:
-                await asyncio.sleep(1)
-                continue
-            raise RuntimeError(f"GPT call failed after {retry_count} attempts: {last_err}")
-
-    raise RuntimeError(f"GPT call failed: {last_err}")
-async def process_crops_async(crop_paths: List[str]) -> List[Dict]:
+    resp = await client.post(
+        f"{API_BASE}/chat/completions",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_MESSAGES},
+                {"role": "user", "content": user_content}
+            ]
+        },
+        timeout=120.0
+    )
+    resp.raise_for_status()
+    raw = resp.json()["choices"][0]["message"]["content"]
+    # Clean JSON fences if present
+    raw = clean_json(raw)
+    parsed = json.loads(raw)
+    return PPEAndVehicleStatus(**parsed)
+async def process_crops_async(crops: List[str]) -> List[Any]:
     """
-    Process crops through GPT with concurrency limit.
-    Requires OPENAI_KEY to be set to a real value.
+    Process crops through GPT with concurrency limit - simplified version.
     """
-
-    results = [None] * len(crop_paths)
+    results = [None] * len(crops)
     semaphore = asyncio.Semaphore(MAX_PARALLEL)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -494,10 +463,9 @@ async def process_crops_async(crop_paths: List[str]) -> List[Dict]:
                     pred = await call_gpt_single(client, b64)
                     results[idx] = pred.model_dump()
                 except Exception as e:
-                    logger.error(f"Error processing crop {path}: {e}")
                     results[idx] = {"error": str(e)}
 
-        tasks = [asyncio.create_task(worker(i, p)) for i, p in enumerate(crop_paths)]
+        tasks = [asyncio.create_task(worker(i, p)) for i, p in enumerate(crops)]
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -876,13 +844,8 @@ def process_video_with_gpt_pipeline(
 
     logger.info(f"   Processing {len(crops_to_process)} crops through GPT...")
 
-    # Process crops asynchronously
-    loop = asyncio.new_event_loop()
-    asyncio. set_event_loop(loop)
-    try:
-        gpt_results = loop.run_until_complete(process_crops_async(crops_to_process))
-    finally:
-        loop.close()
+    # Process crops asynchronously using run_coro helper
+    gpt_results = run_coro(process_crops_async(crops_to_process))
 
     # Attach GPT results
     for local_idx, res in zip(crop_idx_map, gpt_results):
