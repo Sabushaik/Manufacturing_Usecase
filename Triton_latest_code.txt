@@ -90,6 +90,21 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize S3 client: {e}")
 
 # =================================================
+# BEDROCK CLIENT (for Amazon Nova Lite model)
+# =================================================
+bedrock_client = None
+try:
+    bedrock_client = boto3.client(
+        "bedrock-runtime",
+        region_name=AWS_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    )
+    logger.info("✅ Bedrock client initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Bedrock client: {e}")
+
+# =================================================
 # TRITON CONFIG (from Jupyter notebook)
 # =================================================
 TRITON_URL = "localhost:8000"
@@ -400,59 +415,86 @@ def clean_json(raw: str) -> str:
     return raw.strip()
 
 # =================================================
-# GPT VISION CALLS (from Jupyter notebook)
+# BEDROCK VISION CALLS (using Amazon Nova Lite model)
+# =================================================
+def image_to_base64_format(image_b64: str) -> tuple:
+    """Helper to determine image format from base64 string"""
+    # Default to jpeg since most images are jpeg
+    return "jpeg", image_b64
+
 async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count: int = 3) -> PPEAndVehicleStatus:
     """
-    Call GPT Vision API in the same format as the working notebook.
-    Ensures SYSTEM_MESSAGES is populated and API_KEY is valid.
+    Call Amazon Bedrock Nova Lite model for vision analysis.
+    Uses the same interface as the original GPT call for compatibility.
     """
     # Ensure SYSTEM_MESSAGES exists (defensive)
     global SYSTEM_MESSAGES
     if not SYSTEM_MESSAGES:
         initialize_system_messages()
 
-    user_content = [
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
-    ]
+    if bedrock_client is None:
+        raise RuntimeError("Bedrock client not initialized")
+
+    # Build system text from SYSTEM_MESSAGES
+    system_text_parts = []
+    for msg in SYSTEM_MESSAGES:
+        if msg.get("type") == "text":
+            system_text_parts.append(msg.get("text", ""))
+    system_text_combined = "\n".join(system_text_parts)
+
+    # Determine image format
+    image_format, image_base64 = image_to_base64_format(image_b64)
 
     last_err = None
     for attempt in range(retry_count):
         try:
+            # Build Nova Lite payload according to Bedrock format
             payload = {
-                "model": MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_MESSAGES},
-                    {"role": "user", "content": user_content},
-                ],
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "image": {
+                                    "format": image_format,
+                                    "source": {"bytes": image_base64}
+                                }
+                            },
+                            {
+                                "text": f"{system_text_combined}\n\nAnalyze this image and return ONLY valid JSON with the required fields."
+                            }
+                        ]
+                    }
+                ]
             }
 
-            resp = await client.post(
-                f"{API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=120,
+            # Call Bedrock synchronously in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: bedrock_client.invoke_model(
+                    modelId="amazon.nova-lite-v1:0",
+                    body=json.dumps(payload),
+                    contentType="application/json",
+                    accept="application/json"
+                )
             )
 
-            # Retry on 429/5xx
-            if resp.status_code in (429, 500, 502, 503, 504):
-                last_err = resp.text
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                resp.raise_for_status()
-
-            # For 400, log and raise immediately
-            if resp.status_code == 400:
-                logger.error(f"GPT API 400 response body: {resp.text[:1000]}")
-                resp.raise_for_status()
-
-            resp.raise_for_status()
-
-            data = resp.json()
-            raw = data["choices"][0]["message"]["content"]
+            # Parse response
+            result = json.loads(response["body"].read())
+            
+            # Extract content from Nova response
+            # Nova Lite returns: {"output": {"message": {"content": [{"text": "..."}]}}}
+            if "output" in result and "message" in result["output"]:
+                content_list = result["output"]["message"].get("content", [])
+                raw = ""
+                for content_item in content_list:
+                    if "text" in content_item:
+                        raw = content_item["text"]
+                        break
+            else:
+                # Fallback for different response structure
+                raw = json.dumps(result)
 
             # Clean JSON fences
             raw = raw.strip()
@@ -465,22 +507,22 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             raw = raw.strip()
 
             parsed = json.loads(raw)
-            logger.info(f"GPT response parsed successfully: {parsed}")
+            logger.info(f"Bedrock Nova Lite response parsed successfully: {parsed}")
             return PPEAndVehicleStatus(**parsed)
 
         except Exception as e:
             last_err = str(e)
-            logger.error(f"GPT call failed (attempt {attempt + 1}/{retry_count}): {last_err}")
+            logger.error(f"Bedrock call failed (attempt {attempt + 1}/{retry_count}): {last_err}")
             if attempt < retry_count - 1:
-                await asyncio.sleep(1)
+                await asyncio.sleep(2 ** attempt)
                 continue
-            raise RuntimeError(f"GPT call failed after {retry_count} attempts: {last_err}")
+            raise RuntimeError(f"Bedrock call failed after {retry_count} attempts: {last_err}")
 
-    raise RuntimeError(f"GPT call failed: {last_err}")
+    raise RuntimeError(f"Bedrock call failed: {last_err}")
 async def process_crops_async(crop_paths: List[str]) -> List[Dict]:
     """
-    Process crops through GPT with concurrency limit.
-    Requires OPENAI_KEY to be set to a real value.
+    Process crops through Bedrock Nova Lite with concurrency limit.
+    Requires AWS credentials to be set with Bedrock access.
     """
 
     results = [None] * len(crop_paths)
@@ -636,7 +678,7 @@ def process_video_with_gpt_pipeline(
     veh_crop_base_dir: str
 ) -> Dict[str, Any]: 
     """
-    Main processing pipeline combining Triton detection + BOTSORT tracking + GPT Vision
+    Main processing pipeline combining Triton detection + BOTSORT tracking + Bedrock Nova Lite Vision
     """
     timings = {
         "detection_tracking_total": 0.0,
@@ -860,9 +902,9 @@ def process_video_with_gpt_pipeline(
     logger.info(f"✅ Phase 1 complete:  {len(json_output)} detections, {len(person_active_ids)} persons, {len(vehicle_active_ids)} vehicles")
 
     # =================================================
-    # PHASE 2: GPT Vision Analysis
+    # PHASE 2: Bedrock Nova Lite Vision Analysis
     # =================================================
-    logger.info("🤖 Phase 2: GPT Vision Analysis...")
+    logger.info("🤖 Phase 2: Bedrock Nova Lite Vision Analysis...")
     gpt_start = time.time()
 
     # Collect all crops
@@ -874,7 +916,7 @@ def process_video_with_gpt_pipeline(
             crop_idx_map. append(i)
             crops_to_process.append(cp)
 
-    logger.info(f"   Processing {len(crops_to_process)} crops through GPT...")
+    logger.info(f"   Processing {len(crops_to_process)} crops through Bedrock Nova Lite...")
 
     # Process crops asynchronously
     loop = asyncio.new_event_loop()
@@ -900,7 +942,7 @@ def process_video_with_gpt_pipeline(
             item["gpt_result"] = None
 
     timings["gpt_total"] = time. time() - gpt_start
-    logger.info(f"✅ Phase 2 complete: GPT analysis done in {timings['gpt_total']:.2f}s")
+    logger.info(f"✅ Phase 2 complete: Bedrock Nova Lite analysis done in {timings['gpt_total']:.2f}s")
 
     # =================================================
     # PHASE 3: Summarize Results
@@ -1070,14 +1112,16 @@ def process_video_with_gpt_pipeline(
 @app. get("/")
 def read_root():
     return {
-        "message":  "PPE Detection API with YOLO + GPT Vision Pipeline",
+        "message":  "PPE Detection API with YOLO + Bedrock Nova Lite Vision Pipeline",
         "triton_connected": triton_client is not None,
         "triton_server":  TRITON_URL,
         "model_name": MODEL_NAME,
-        "gpt_model":  MODEL,
+        "vision_model":  "amazon.nova-lite-v1:0",
+        "vision_provider": "Amazon Bedrock",
         "input_size": TARGET_SIZE,
         "s3_bucket": S3_BUCKET,
-        "s3_configured": bool(S3_BUCKET and AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)
+        "s3_configured": bool(S3_BUCKET and AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY),
+        "bedrock_configured": bedrock_client is not None
     }
 
 
@@ -1098,6 +1142,8 @@ def health_check():
         except:
             pass
 
+    bedrock_healthy = bedrock_client is not None
+
     return {
         "status": "healthy",
         "bucket": S3_BUCKET,
@@ -1107,139 +1153,86 @@ def health_check():
         "triton_healthy": triton_healthy,
         "triton_server":  TRITON_URL,
         "model_name": MODEL_NAME,
-        "gpt_model": MODEL,
-        "gpt_api_base": API_BASE
+        "vision_model": "amazon.nova-lite-v1:0",
+        "vision_provider": "Amazon Bedrock",
+        "bedrock_connected": bedrock_healthy
     }
 
 @app.post("/test-gpt")
 async def test_gpt():
-    """Test GPT API connection with a simple request"""
+    """Test Bedrock Nova Lite API connection"""
     try:
-        # Test 1: Simple text request (no images)
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            logger.info("Testing GPT API with simple text request...")
-            
-            resp = await client.post(
-                f"{API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": MODEL,
-                    "messages": [
-                        {"role": "user", "content": "Say hello"}
-                    ]
-                },
-                timeout=30.0
-            )
-            
-            logger.info(f"Simple request status: {resp.status_code}")
-            
-            if resp.status_code != 200:
-                return {
-                    "test":  "simple_text",
-                    "status": resp.status_code,
-                    "error": resp.text[: 1000]
-                }
-            
-            simple_result = resp.json()
-            
-            # Test 2: Request with small image
-            logger.info("Testing GPT API with image request...")
-            
-            # Create a small test image (100x100 red square)
-            import io
-            from PIL import Image
-            img = Image.new('RGB', (100, 100), color='red')
-            buffer = io.BytesIO()
-            img.save(buffer, format='JPEG', quality=50)
-            test_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            resp2 = await client.post(
-                f"{API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": MODEL,
-                    "messages": [
-                        {"role":  "user", "content": [
-                            {"type": "text", "text": "What color is this image?"},
-                            {"type": "image_url", "image_url": {"url":  f"data:image/jpeg;base64,{test_image_b64}"}}
-                        ]}
-                    ]
-                },
-                timeout=60.0
-            )
-            
-            logger.info(f"Image request status: {resp2.status_code}")
-            
-            if resp2.status_code != 200:
-                return {
-                    "test": "image",
-                    "status": resp2.status_code,
-                    "error": resp2.text[:1000],
-                    "simple_test": "passed"
-                }
-            
-            image_result = resp2.json()
-            
-            # Test 3: Request with system message as list (like notebook)
-            logger.info("Testing GPT API with system message as list...")
-            
-            system_content = [
-                {"type": "text", "text": "You are a helpful assistant.  Return JSON only."}
-            ]
-            
-            resp3 = await client.post(
-                f"{API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type":  "application/json"
-                },
-                json={
-                    "model": MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_content},
-                        {"role": "user", "content": [
-                            {"type": "text", "text": "Say hello in JSON format"}
-                        ]}
-                    ]
-                },
-                timeout=60.0
-            )
-            
-            logger.info(f"System list request status: {resp3.status_code}")
-            
+        if bedrock_client is None:
             return {
-                "simple_text_test": {
-                    "status": "passed",
-                    "response": simple_result["choices"][0]["message"]["content"][: 200]
-                },
-                "image_test": {
-                    "status": "passed" if resp2.status_code == 200 else "failed",
-                    "response": image_result["choices"][0]["message"]["content"][:200] if resp2.status_code == 200 else resp2.text[:500]
-                },
-                "system_list_test": {
-                    "status": "passed" if resp3.status_code == 200 else "failed",
-                    "status_code": resp3.status_code,
-                    "response":  resp3.json()["choices"][0]["message"]["content"][:200] if resp3.status_code == 200 else resp3.text[:500]
-                },
-                "config": {
-                    "model":  MODEL,
-                    "api_base": API_BASE,
-                    "system_messages_loaded":  SYSTEM_MESSAGES is not None,
-                    "system_messages_length": len(SYSTEM_MESSAGES) if SYSTEM_MESSAGES else 0
-                }
+                "error": "Bedrock client not initialized",
+                "details": "Check AWS credentials and region configuration"
             }
-            
+
+        # Create a small test image (100x100 red square)
+        import io
+        from PIL import Image
+        img = Image.new('RGB', (100, 100), color='red')
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=50)
+        test_image_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        logger.info("Testing Bedrock Nova Lite API with test image...")
+
+        # Build test payload
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "image": {
+                                "format": "jpeg",
+                                "source": {"bytes": test_image_b64}
+                            }
+                        },
+                        {
+                            "text": "What color is this image? Respond with just the color name."
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # Call Bedrock
+        response = bedrock_client.invoke_model(
+            modelId="amazon.nova-lite-v1:0",
+            body=json.dumps(payload),
+            contentType="application/json",
+            accept="application/json"
+        )
+
+        result = json.loads(response["body"].read())
+        logger.info(f"Bedrock test response: {result}")
+
+        # Extract text from response
+        response_text = "No response"
+        if "output" in result and "message" in result["output"]:
+            content_list = result["output"]["message"].get("content", [])
+            for content_item in content_list:
+                if "text" in content_item:
+                    response_text = content_item["text"]
+                    break
+
+        return {
+            "status": "success",
+            "model": "amazon.nova-lite-v1:0",
+            "provider": "Amazon Bedrock",
+            "region": AWS_REGION,
+            "test_response": response_text[:500],
+            "full_response": result
+        }
+
     except Exception as e:
-        logger.error(f"Test GPT failed: {e}", exc_info=True)
+        logger.error(f"Test Bedrock failed: {e}", exc_info=True)
         return {
             "error": str(e),
-            "type": type(e).__name__
+            "type": type(e).__name__,
+            "details": traceback.format_exc()[:1000]
         }
 
 @app.post("/upload-video")
@@ -1428,7 +1421,7 @@ async def upload_video(
 
 @app.post("/process-video")
 async def process_video(data: S3UriInput):
-    """Process video with YOLO detection + GPT Vision for PPE/Vehicle classification"""
+    """Process video with YOLO detection + Bedrock Nova Lite Vision for PPE/Vehicle classification"""
     api_start_time = datetime.now()
     overall_start = time.time()
 
@@ -1493,7 +1486,7 @@ async def process_video(data: S3UriInput):
         temp_output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         # Process video
-        logger. info("🚀 Starting YOLO + GPT Vision pipeline...")
+        logger. info("🚀 Starting YOLO + Bedrock Nova Lite Vision pipeline...")
         processing_start = time.time()
 
         loop = asyncio.get_event_loop()
@@ -1562,7 +1555,8 @@ async def process_video(data: S3UriInput):
                 "config": {
                     "model_name": MODEL_NAME,
                     "triton_server":  TRITON_URL,
-                    "gpt_model": MODEL,
+                    "vision_model": "amazon.nova-lite-v1:0",
+                    "vision_provider": "Amazon Bedrock",
                     "confidence_threshold": CONF_THRESH,
                     "iou_threshold": IOU_THRESHOLD
                 },
@@ -1610,7 +1604,7 @@ async def process_video(data: S3UriInput):
         return JSONResponse(
             status_code=200,
             content={
-                "message": "Successfully processed video with YOLO + GPT Vision pipeline",
+                "message": "Successfully processed video with YOLO + Bedrock Nova Lite Vision pipeline",
                 "input_s3_uri": s3_uri,
                 "output_s3_uri": output_s3_uri,
                 "output_presigned_url": output_presigned_url,
@@ -1620,7 +1614,8 @@ async def process_video(data: S3UriInput):
                 "config": {
                     "model_name": MODEL_NAME,
                     "triton_server":  TRITON_URL,
-                    "gpt_model": MODEL,
+                    "vision_model": "amazon.nova-lite-v1:0",
+                    "vision_provider": "Amazon Bedrock",
                     "confidence_threshold":  CONF_THRESH,
                     "iou_threshold": IOU_THRESHOLD
                 },
