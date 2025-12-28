@@ -1062,20 +1062,23 @@ def process_video_with_gpt_pipeline(
                             y_text += line_h
 
                 elif typ == "vehicle": 
-                    # Get vehicle label from GPT
+                    # Get vehicle label from GPT - show specific type (forklift, excavator, etc.)
                     draw_label = item.get("gpt_vehicle_label")
                     if not draw_label: 
                         gpt_res = item.get("gpt_result")
                         if isinstance(gpt_res, dict):
                             vehicles_dict = gpt_res.get("vehicles", {})
                             if vehicles_dict:
-                                draw_label = max(vehicles_dict. items(), key=lambda kv: kv[1])[0]
+                                draw_label = max(vehicles_dict.items(), key=lambda kv: kv[1])[0]
                     if not draw_label: 
-                        draw_label = "Vehicle"
+                        draw_label = "vehicle"
+                    
+                    # Capitalize first letter for display
+                    display_label = draw_label.capitalize()
 
                     color = get_vehicle_color()
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
-                    cv2.putText(frame, draw_label, (x1, y1 - 10),
+                    cv2.putText(frame, display_label, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
 
         out.write(frame)
