@@ -368,7 +368,7 @@ def initialize_system_messages():
         SYSTEM_MESSAGES = build_system_messages(sample_cache)
         # FIX the count:
         total_samples = sum(len(v) for v in sample_cache.values())
-        logger.info(f"✅ Loaded {total_samples} sample images for GPT prompts")
+        logger.info(f"✅ Loaded {total_samples} sample images for Bedrock Nova Lite prompts")
     except Exception as e:
         logger.error(f"Failed to initialize system messages: {e}")
         SYSTEM_MESSAGES = [{"type": "text", "text": SYSTEM_TEXT}]
@@ -417,15 +417,17 @@ def clean_json(raw: str) -> str:
 # =================================================
 # BEDROCK VISION CALLS (using Amazon Nova Lite model)
 # =================================================
-def image_to_base64_format(image_b64: str) -> tuple:
-    """Helper to determine image format from base64 string"""
+def get_image_format_and_base64(image_b64: str) -> tuple:
+    """Helper to prepare image for Bedrock API - defaults to jpeg format"""
     # Default to jpeg since most images are jpeg
+    # The base64 string is passed through as-is
     return "jpeg", image_b64
 
 async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count: int = 3) -> PPEAndVehicleStatus:
     """
     Call Amazon Bedrock Nova Lite model for vision analysis.
     Uses the same interface as the original GPT call for compatibility.
+    Note: 'client' parameter is unused but kept for backward compatibility.
     """
     # Ensure SYSTEM_MESSAGES exists (defensive)
     global SYSTEM_MESSAGES
@@ -443,7 +445,7 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
     system_text_combined = "\n".join(system_text_parts)
 
     # Determine image format
-    image_format, image_base64 = image_to_base64_format(image_b64)
+    image_format, image_base64 = get_image_format_and_base64(image_b64)
 
     last_err = None
     for attempt in range(retry_count):
