@@ -629,6 +629,18 @@ async def upload_json_to_s3(data: dict, bucket: str, key: str) -> str:
 # =================================================
 # MAIN PROCESSING PIPELINE (from Jupyter notebook)
 # =================================================
+def get_vehicle_label_from_gpt_result(gpt_result):
+    """
+    Extract vehicle label from GPT result.
+    Returns the vehicle type with the highest count, or None if no vehicles found.
+    """
+    if isinstance(gpt_result, dict):
+        vehicles_dict = gpt_result.get("vehicles", {})
+        if vehicles_dict:
+            return max(vehicles_dict.items(), key=lambda kv: kv[1])[0]
+    return None
+
+
 def process_video_with_gpt_pipeline(
     video_path: str,
     output_video_path: str,
@@ -887,12 +899,10 @@ def process_video_with_gpt_pipeline(
     # Attach GPT results
     for local_idx, res in zip(crop_idx_map, gpt_results):
         json_output[local_idx]["gpt_result"] = res
-        if json_output[local_idx]. get("type") == "vehicle" and isinstance(res, dict):
-            vehicles_dict = res. get("vehicles", {})
-            if vehicles_dict: 
-                json_output[local_idx]["gpt_vehicle_label"] = max(
-                    vehicles_dict.items(), key=lambda kv: kv[1]
-                )[0]
+        if json_output[local_idx].get("type") == "vehicle":
+            vehicle_label = get_vehicle_label_from_gpt_result(res)
+            if vehicle_label:
+                json_output[local_idx]["gpt_vehicle_label"] = vehicle_label
 
     # Fill missing
     for item in json_output: 
@@ -918,16 +928,14 @@ def process_video_with_gpt_pipeline(
             elif typ == "vehicle" and item.get("gpt_result"):
                 tid = str(item["tid"])
                 gpt_result = item.get("gpt_result")
-                if isinstance(gpt_result, dict):
-                    vehicles_dict = gpt_result.get("vehicles", {})
-                    if vehicles_dict:
-                        # Get the vehicle type with the highest count
-                        vehicle_label = max(vehicles_dict.items(), key=lambda kv: kv[1])[0]
-                        # Store or update the label for this track ID
-                        if tid not in vehicle_tid_labels:
-                            vehicle_tid_labels[tid] = vehicle_label
-                        # Count vehicles
-                        for v, c in vehicles_dict.items():
+                vehicle_label = get_vehicle_label_from_gpt_result(gpt_result)
+                if vehicle_label:
+                    # Store the label for this track ID (first occurrence only)
+                    if tid not in vehicle_tid_labels:
+                        vehicle_tid_labels[tid] = vehicle_label
+                    # Count vehicles
+                    if isinstance(gpt_result, dict):
+                        for v, c in gpt_result.get("vehicles", {}).items():
                             vehicle_counts[v] += c
 
         final_summary = {}
@@ -1038,11 +1046,7 @@ def process_video_with_gpt_pipeline(
                     if not draw_label:
                         draw_label = item.get("gpt_vehicle_label")
                     if not draw_label: 
-                        gpt_res = item.get("gpt_result")
-                        if isinstance(gpt_res, dict):
-                            vehicles_dict = gpt_res.get("vehicles", {})
-                            if vehicles_dict:
-                                draw_label = max(vehicles_dict. items(), key=lambda kv: kv[1])[0]
+                        draw_label = get_vehicle_label_from_gpt_result(item.get("gpt_result"))
                     if not draw_label: 
                         draw_label = "vehicle"
 
