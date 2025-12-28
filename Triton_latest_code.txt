@@ -931,8 +931,8 @@ def process_video_with_gpt_pipeline(
     # Attach GPT results
     for local_idx, res in zip(crop_idx_map, gpt_results):
         json_output[local_idx]["gpt_result"] = res
-        if json_output[local_idx]. get("type") == "vehicle" and isinstance(res, dict):
-            vehicles_dict = res. get("vehicles", {})
+        if json_output[local_idx].get("type") == "vehicle" and isinstance(res, dict):
+            vehicles_dict = res.get("vehicles", {})
             if vehicles_dict: 
                 json_output[local_idx]["gpt_vehicle_label"] = max(
                     vehicles_dict.items(), key=lambda kv: kv[1]
@@ -963,20 +963,20 @@ def process_video_with_gpt_pipeline(
                     vehicle_counts[v] += c
 
         final_summary = {}
-        for person_id, records in person_results. items():
+        for person_id, records in person_results.items():
             ppe_votes = {k: [] for k in ["hardhat", "goggles", "safety_vest", "gloves", "shoes"]}
             veh_local = defaultdict(int)
             for res in records:
                 if not isinstance(res, dict):
                     continue
                 for k in ppe_votes: 
-                    ppe_votes[k].append(res. get(k, False))
-                for v, c in res. get("vehicles", {}).items():
+                    ppe_votes[k].append(res.get(k, False))
+                for v, c in res.get("vehicles", {}).items():
                     veh_local[v] += c
             final_ppe = {k: (Counter(vals)[True] > Counter(vals)[False]) for k, vals in ppe_votes.items()}
             final_summary[person_id] = {
                 **final_ppe,
-                "PPE":  all(final_ppe. values()),
+                "PPE":  all(final_ppe.values()),
                 "vehicles": dict(veh_local)
             }
         return final_summary, dict(vehicle_counts)
@@ -1062,20 +1062,23 @@ def process_video_with_gpt_pipeline(
                             y_text += line_h
 
                 elif typ == "vehicle": 
-                    # Get vehicle label from GPT
+                    # Get vehicle label from GPT - show specific type (forklift, excavator, etc.)
                     draw_label = item.get("gpt_vehicle_label")
                     if not draw_label: 
                         gpt_res = item.get("gpt_result")
                         if isinstance(gpt_res, dict):
                             vehicles_dict = gpt_res.get("vehicles", {})
                             if vehicles_dict:
-                                draw_label = max(vehicles_dict. items(), key=lambda kv: kv[1])[0]
+                                draw_label = max(vehicles_dict.items(), key=lambda kv: kv[1])[0]
                     if not draw_label: 
-                        draw_label = "Vehicle"
+                        draw_label = "vehicle"
+                    
+                    # Format label for display: replace underscores with spaces and capitalize words
+                    display_label = draw_label.replace("_", " ").title()
 
                     color = get_vehicle_color()
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
-                    cv2.putText(frame, draw_label, (x1, y1 - 10),
+                    cv2.putText(frame, display_label, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
 
         out.write(frame)
