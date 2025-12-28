@@ -1073,8 +1073,8 @@ def process_video_with_gpt_pipeline(
                     if not draw_label: 
                         draw_label = "vehicle"
                     
-                    # Capitalize first letter for display
-                    display_label = draw_label.capitalize()
+                    # Format label for display: replace underscores with spaces and capitalize words
+                    display_label = draw_label.replace("_", " ").title()
 
                     color = get_vehicle_color()
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
