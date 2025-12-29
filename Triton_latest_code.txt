@@ -176,50 +176,134 @@ HARDCODED_CONFIG = {
 # =================================================
 # GPT SYSTEM PROMPT (from Jupyter notebook)
 # =================================================
-SYSTEM_TEXT = (
-    "You are a vision analysis system.\n"
-    "Analyze images and return ONLY valid JSON.\n\n"
-    "IMPORTANT:\n"
-    "Use the PROVIDED SAMPLE IMAGES as visual guidance to understand\n"
-    "how industrial PPE AND manufacturing vehicles generally look\n"
-    "in real manufacturing and construction environments.\n"
-    "Do NOT restrict detection only to exact sample matches.\n\n"
-    "GENERAL PPE APPEARANCE GUIDELINES:\n"
-    "- Gloves:  Tight-fitting hand coverings with a fabric, knit, rubber, or coated base.\n"
-    "- Goggles: Clear or lightly tinted lenses with a protective plastic frame or seal.\n"
-    "- Hardhat: Rigid protective helmet with a smooth or slightly ridged dome.\n"
-    "- Safety vest: High-visibility outer garment or industrial protective coverall.\n"
-    "- Shoes: Closed-toe industrial footwear with thick or reinforced sole.\n\n"
-    "GENERAL VEHICLE APPEARANCE GUIDELINES (BY TYPE):\n"
-    "- Bulldozer: Heavy tracked vehicle with a wide flat metal blade at the front; low-profile; tracks.\n"
-    "- Excavator:  Tracked or wheeled, rotating upper body; long arm with digging bucket.\n"
-    "- Cement Mixer Truck: Truck with a large rotating cylindrical drum on the rear.\n"
-    "- Mobile Concrete Mixer / Site Mixer: Smaller mixer with prominent drum/chute on site.\n"
-    "- Crane: Vehicle with extended boom/telescopic arm, hook/pulley/cable.\n"
-    "- Forklift: Compact, two parallel forks at front, upright lifting mast.\n"
-    "- Road Roller / Compactor: Large cylindrical rollers instead of wheels.\n"
-    "- Tractor: Large rear wheels, smaller front wheels; open/semi-enclosed seat.\n"
-    "- Cargo Truck: Wheeled truck with front cabin and rear container/bed; no special attachments.\n\n"
-    "NEGATIVE VISUAL CONSTRAINTS:\n"
-    "- No caps, sunglasses, casual clothing, sandals, or slippers as PPE.\n"
-    "- Ignore toys, posters, or vehicle images on screens.\n\n"
-    "PERSON-CENTRIC PPE RULES:\n"
-    "- PPE must be correctly worn on a visible person.\n"
-    "- Misplaced, carried, or partially worn PPE → false.\n\n"
-    "VISIBILITY RULES:\n"
-    "- PPE or vehicle must be ≥50% visible.\n"
-    "- Heavy blur, extreme occlusion, or unclear object → false / not counted.\n\n"
-    "VEHICLE COUNTING RULES:\n"
-    "- Count only clearly visible real vehicles.\n"
-    "- Group vehicles by detected type.\n\n"
-    "OUTPUT RULES:\n"
-    "- Always return all PPE keys.\n"
-    "- Vehicles must be returned as a dictionary of {vehicle_type: count}.\n\n"
-    "Return JSON ONLY with:\n"
-    "- hardhat, goggles, safety_vest, gloves, shoes (boolean)\n"
-    "- vehicles:  { \"vehicle_type\":  count }\n\n"
-    "No explanations."
-)
+SYSTEM_TEXT =("""You are an industrial safety vision analysis system specialized in PPE compliance and vehicle detection. 
+
+TASK: Analyze the image and return ONLY valid JSON with PPE status and vehicle counts.
+
+═══════════════════════════════════════════════════════════════
+PPE DETECTION RULES
+═══════════════════════════════════════════════════════════════
+
+HARDHAT (true/false):
+- TRUE: Rigid protective helmet with dome shape, worn ON HEAD
+- Colors: White, yellow, orange, blue, red common in industrial settings
+- FALSE: Baseball caps, beanies, hoods, bandanas, bare head
+
+GOGGLES (true/false):
+- TRUE: Safety glasses/goggles worn OVER THE EYES with these features:
+  • Wrap-around design or side shields
+  • Clear, tinted, yellow, or mirrored lenses
+  • Thick sturdy frames (thicker than regular glasses)
+  • Sealed goggles with elastic strap around head
+  • Prescription safety glasses WITH side shields
+  • Welding goggles or face shield with glasses underneath
+- FALSE: 
+  • Goggles pushed UP on forehead
+ 
+
+SAFETY_VEST (true/false):
+- TRUE: High-visibility vest/jacket worn ON TORSO, typically neon yellow/orange with reflective strips
+- Also accept: Full-body coveralls in high-vis colors, reflective work jackets
+- FALSE: Regular clothing, dark jackets without reflective elements
+
+GLOVES (true/false):
+- TRUE: Work gloves covering BOTH HANDS - leather, rubber, nitrile, or fabric
+- Look for: Different texture/color than skin on hands
+- FALSE: Bare hands, gloves held/carried, single glove only
+
+SHOES (true/false):
+- TRUE: Closed-toe industrial footwear - safety boots, work shoes with thick soles
+- Look for:  Ankle coverage, reinforced toe area, sturdy construction
+- FALSE:  Sandals, slippers, sneakers, bare feet, feet not visible → false
+
+CRITICAL PPE RULES:
+1. PPE must be ACTIVELY WORN in correct position - not carried, hanging, or misplaced
+2. If body part is NOT VISIBLE, return false for that PPE item
+3. If image is blurry/unclear for specific item, return false
+4. Partial wear (e.g., hardhat tilted back, vest unbuttoned) → still true if on body
+
+═══════════════════════════════════════════════════════════════
+VEHICLE DETECTION RULES
+═══════════════════════════════════════════════════════════════
+
+VEHICLE TYPES TO DETECT: 
+
+forklift: 
+- Compact vehicle with vertical mast and two horizontal forks at front
+- Usually has counterweight at rear, small turning radius
+- Found indoors in warehouses/factories
+
+excavator:
+- Tracked or wheeled base with rotating cab
+- Long articulated arm (boom + stick) ending in bucket
+- Hydraulic cylinders visible on arm
+
+bulldozer:
+- Heavy tracked vehicle with large flat blade at front
+- Low profile, tracks on both sides
+- Blade is wide and curved
+
+crane:
+- Vehicle or stationary structure with long boom/arm
+- Has cables, hooks, or lifting mechanism
+- May be mobile (truck-mounted) or tower crane
+
+cement_mixer_truck:
+- Truck chassis with large rotating drum
+- Drum is cylindrical with spiral fins inside
+- Chute at rear for pouring
+
+road_roller:
+- Large cylindrical drum(s) instead of wheels
+- Used for compacting surfaces
+- May have single or double drums
+
+tractor:
+- Large rear wheels, smaller front wheels
+- Open or enclosed cab
+- Agricultural or industrial use
+
+cargo_truck:
+- Standard truck with cabin and cargo area
+- Box truck, flatbed, or container carrier
+- No special industrial attachments
+
+VEHICLE COUNTING RULES:
+1. Count each DISTINCT vehicle separately
+2. Same vehicle partially visible in frame = count as 1
+3. Vehicles in background if clearly identifiable = count them
+4. IGNORE:  Toy vehicles, vehicles on posters/screens/images, parked personal cars
+
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════
+
+Return ONLY this JSON structure, no other text:
+
+{
+  "hardhat": boolean,
+  "goggles":  boolean,
+  "safety_vest": boolean,
+  "gloves": boolean,
+  "shoes":  boolean,
+  "vehicles": {"vehicle_type": count}
+}
+
+EXAMPLES: 
+
+Person with full PPE, one forklift: 
+{"hardhat": true, "goggles": true, "safety_vest": true, "gloves": true, "shoes": true, "vehicles": {"forklift": 1}}
+
+Person missing gloves and goggles, two forklifts:
+{"hardhat": true, "goggles":  false, "safety_vest": true, "gloves": false, "shoes": true, "vehicles": {"forklift": 2}}
+
+No person visible, only excavator:
+{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {"excavator": 1}}
+
+No PPE visible, no vehicles:
+{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {}}
+
+RESPOND WITH JSON ONLY.  NO EXPLANATIONS.""")
 
 # =================================================
 # PYDANTIC MODELS
@@ -678,7 +762,7 @@ def process_video_with_gpt_pipeline(
     output_video_path: str,
     crop_base_dir: str,
     veh_crop_base_dir: str
-) -> Dict[str, Any]: 
+) -> Dict[str, Any]:
     """
     Main processing pipeline combining Triton detection + BOTSORT tracking + Bedrock Nova Lite Vision
     """
@@ -701,7 +785,7 @@ def process_video_with_gpt_pipeline(
     os.makedirs(crop_base_dir, exist_ok=True)
     os.makedirs(veh_crop_base_dir, exist_ok=True)
 
-    # Initialize trackers (from Jupyter notebook)
+    # Initialize trackers
     person_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
         track_high_thresh=0.25,
@@ -738,13 +822,13 @@ def process_video_with_gpt_pipeline(
         raise ValueError("Failed to open video file")
 
     fps = int(cap.get(cv2.CAP_PROP_FPS))
-    W = int(cap. get(cv2.CAP_PROP_FRAME_WIDTH))
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     logger.info(f"📹 Processing video: {total_frames} frames at {fps} FPS, {W}x{H}")
 
-    # Tracking state (from Jupyter notebook)
+    # Tracking state
     person_trackid_to_bbox = {}
     person_tid_remap = {}
     person_active_ids = set()
@@ -766,7 +850,7 @@ def process_video_with_gpt_pipeline(
     detection_start = time.time()
 
     while True:
-        ret, frame = cap. read()
+        ret, frame = cap.read()
         if not ret:
             break
         frame_idx += 1
@@ -778,7 +862,7 @@ def process_video_with_gpt_pipeline(
         output = triton_infer(img, local_triton_client)
         timings["triton_infer_total"] += time.time() - infer_start
 
-        post_start = time. time()
+        post_start = time.time()
         dets = postprocess(output, meta, allowed_cls)
         timings["postprocess_total"] += time.time() - post_start
 
@@ -794,32 +878,31 @@ def process_video_with_gpt_pipeline(
         track_start = time.time()
         if len(person_dets) > 0:
             boxes = Boxes(person_dets[: , :6], orig_shape=frame.shape)
-            person_tracks = person_tracker. update(boxes, frame)
+            person_tracks = person_tracker.update(boxes, frame)
         else:
             person_tracks = []
 
         # Track vehicles
         if len(veh_dets) > 0:
-            veh_boxes = Boxes(veh_dets[:, : 6], orig_shape=frame.shape)
+            veh_boxes = Boxes(veh_dets[:, :6], orig_shape=frame.shape)
             veh_tracks = vehicle_tracker.update(veh_boxes, frame)
         else:
             veh_tracks = []
-        timings["tracking_total"] += time. time() - track_start
+        timings["tracking_total"] += time.time() - track_start
 
         # Process person tracks
-        for t in person_tracks: 
+        for t in person_tracks:
             x1, y1, x2, y2, tid, _, _ = t[: 7]
             tid = int(tid)
             bbox = (x1, y1, x2, y2)
 
-            if tid not in person_tid_remap: 
+            if tid not in person_tid_remap:
                 matched = None
                 for old_id in person_active_ids:
                     prev = person_trackid_to_bbox.get(old_id)
                     if prev is None:
                         continue
-                    if euclidean(center(prev), center(bbox)) < DIST_THRESHOLD or \
-                       iou(prev, bbox) > IOU_THRESHOLD: 
+                    if euclidean(center(prev), center(bbox)) < DIST_THRESHOLD or iou(prev, bbox) > IOU_THRESHOLD:
                         matched = old_id
                         break
                 person_tid_remap[tid] = matched if matched is not None else tid
@@ -830,14 +913,14 @@ def process_video_with_gpt_pipeline(
 
             # Create crop once per second
             crop_path = None
-            if frame_idx - last_crop_frame.get(("person", final_id), -fps) >= fps:
+            if frame_idx - last_crop_frame. get(("person", final_id), -fps) >= fps:
                 xi1, yi1 = max(0, int(x1)), max(0, int(y1))
                 xi2, yi2 = min(W, int(x2)), min(H, int(y2))
                 if xi2 > xi1 and yi2 > yi1:
                     crop = frame[yi1:yi2, xi1:xi2]
-                    person_dir = os.path. join(crop_base_dir, f"person_{final_id}")
+                    person_dir = os.path.join(crop_base_dir, f"person_{final_id}")
                     os.makedirs(person_dir, exist_ok=True)
-                    crop_path = os.path.join(person_dir, f"sec_{frame_idx // fps}.jpg")
+                    crop_path = os. path.join(person_dir, f"sec_{frame_idx // fps}.jpg")
                     cv2.imwrite(crop_path, crop)
                     last_crop_frame[("person", final_id)] = frame_idx
 
@@ -853,18 +936,17 @@ def process_video_with_gpt_pipeline(
 
         # Process vehicle tracks
         for vt in veh_tracks:
-            x1, y1, x2, y2, vtid, _, _ = vt[:7]
+            x1, y1, x2, y2, vtid, _, _ = vt[: 7]
             vtid = int(vtid)
             bbox = (x1, y1, x2, y2)
 
             if vtid not in vehicle_tid_remap:
                 matched = None
-                for old_id in vehicle_active_ids: 
+                for old_id in vehicle_active_ids:
                     prev = vehicle_trackid_to_bbox.get(old_id)
                     if prev is None:
                         continue
-                    if euclidean(center(prev), center(bbox)) < DIST_THRESHOLD or \
-                       iou(prev, bbox) > IOU_THRESHOLD:
+                    if euclidean(center(prev), center(bbox)) < DIST_THRESHOLD or iou(prev, bbox) > IOU_THRESHOLD:
                         matched = old_id
                         break
                 vehicle_tid_remap[vtid] = matched if matched is not None else vtid
@@ -875,19 +957,19 @@ def process_video_with_gpt_pipeline(
 
             # Create crop once per second
             crop_path = None
-            if frame_idx - last_crop_frame. get(("veh", final_vid), -fps) >= fps:
+            if frame_idx - last_crop_frame.get(("veh", final_vid), -fps) >= fps:
                 xi1, yi1 = max(0, int(x1)), max(0, int(y1))
                 xi2, yi2 = min(W, int(x2)), min(H, int(y2))
                 if xi2 > xi1 and yi2 > yi1:
                     crop = frame[yi1:yi2, xi1:xi2]
-                    veh_dir = os.path.join(veh_crop_base_dir, f"vehicle_{final_vid}")
-                    os. makedirs(veh_dir, exist_ok=True)
-                    crop_path = os.path. join(veh_dir, f"sec_{frame_idx // fps}.jpg")
+                    veh_dir = os.path. join(veh_crop_base_dir, f"vehicle_{final_vid}")
+                    os.makedirs(veh_dir, exist_ok=True)
+                    crop_path = os.path.join(veh_dir, f"sec_{frame_idx // fps}.jpg")
                     cv2.imwrite(crop_path, crop)
                     last_crop_frame[("veh", final_vid)] = frame_idx
 
-            json_output.append({
-                "frame_id":  int(frame_idx),
+            json_output. append({
+                "frame_id": int(frame_idx),
                 "type": "vehicle",
                 "tid": int(final_vid),
                 "cls_id": -1,
@@ -901,7 +983,7 @@ def process_video_with_gpt_pipeline(
 
     cap.release()
     timings["detection_tracking_total"] = time.time() - detection_start
-    logger.info(f"✅ Phase 1 complete:  {len(json_output)} detections, {len(person_active_ids)} persons, {len(vehicle_active_ids)} vehicles")
+    logger.info(f"✅ Phase 1 complete: {len(json_output)} detections, {len(person_active_ids)} persons, {len(vehicle_active_ids)} vehicles")
 
     # =================================================
     # PHASE 2: Bedrock Nova Lite Vision Analysis
@@ -913,16 +995,16 @@ def process_video_with_gpt_pipeline(
     crops_to_process = []
     crop_idx_map = []
     for i, item in enumerate(json_output):
-        cp = item. get("crop_path")
+        cp = item.get("crop_path")
         if cp and os.path.exists(cp):
-            crop_idx_map. append(i)
+            crop_idx_map.append(i)
             crops_to_process.append(cp)
 
     logger.info(f"   Processing {len(crops_to_process)} crops through Bedrock Nova Lite...")
 
     # Process crops asynchronously
     loop = asyncio.new_event_loop()
-    asyncio. set_event_loop(loop)
+    asyncio.set_event_loop(loop)
     try:
         gpt_results = loop.run_until_complete(process_crops_async(crops_to_process))
     finally:
@@ -931,20 +1013,20 @@ def process_video_with_gpt_pipeline(
     # Attach GPT results
     for local_idx, res in zip(crop_idx_map, gpt_results):
         json_output[local_idx]["gpt_result"] = res
-        if json_output[local_idx]. get("type") == "vehicle" and isinstance(res, dict):
-            vehicles_dict = res. get("vehicles", {})
-            if vehicles_dict: 
+        if json_output[local_idx].get("type") == "vehicle" and isinstance(res, dict):
+            vehicles_dict = res.get("vehicles", {})
+            if vehicles_dict:
                 json_output[local_idx]["gpt_vehicle_label"] = max(
                     vehicles_dict.items(), key=lambda kv: kv[1]
                 )[0]
 
     # Fill missing
-    for item in json_output: 
-        if "gpt_result" not in item: 
+    for item in json_output:
+        if "gpt_result" not in item:
             item["gpt_result"] = None
 
-    timings["gpt_total"] = time. time() - gpt_start
-    logger.info(f"✅ Phase 2 complete: Bedrock Nova Lite analysis done in {timings['gpt_total']:.2f}s")
+    timings["gpt_total"] = time.time() - gpt_start
+    logger.info(f"✅ Phase 2 complete:  Bedrock Nova Lite analysis done in {timings['gpt_total']:.2f}s")
 
     # =================================================
     # PHASE 3: Summarize Results
@@ -963,20 +1045,20 @@ def process_video_with_gpt_pipeline(
                     vehicle_counts[v] += c
 
         final_summary = {}
-        for person_id, records in person_results. items():
+        for person_id, records in person_results.items():
             ppe_votes = {k: [] for k in ["hardhat", "goggles", "safety_vest", "gloves", "shoes"]}
             veh_local = defaultdict(int)
             for res in records:
                 if not isinstance(res, dict):
                     continue
-                for k in ppe_votes: 
-                    ppe_votes[k].append(res. get(k, False))
-                for v, c in res. get("vehicles", {}).items():
+                for k in ppe_votes:
+                    ppe_votes[k].append(res.get(k, False))
+                for v, c in res.get("vehicles", {}).items():
                     veh_local[v] += c
             final_ppe = {k: (Counter(vals)[True] > Counter(vals)[False]) for k, vals in ppe_votes.items()}
             final_summary[person_id] = {
                 **final_ppe,
-                "PPE":  all(final_ppe. values()),
+                "PPE": all(final_ppe.values()),
                 "vehicles": dict(veh_local)
             }
         return final_summary, dict(vehicle_counts)
@@ -994,23 +1076,33 @@ def process_video_with_gpt_pipeline(
     for item in json_output:
         frame_map[item["frame_id"]].append(item)
 
+    # Build vehicle label map for O(1) lookups during annotation
+    vehicle_label_map = {}
+    for item in json_output:
+        if item.get("type") == "vehicle" and item.get("gpt_vehicle_label"):
+            tid = item["tid"]
+            if tid not in vehicle_label_map:
+                vehicle_label_map[tid] = item["gpt_vehicle_label"]
+
+    logger.info(f"   Vehicle label map: {len(vehicle_label_map)} unique vehicle types identified")
+
     cap = cv2.VideoCapture(video_path)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (W, H))
 
     frame_idx = 0
     while True:
-        ret, frame = cap. read()
+        ret, frame = cap.read()
         if not ret:
             break
         frame_idx += 1
 
-        if frame_idx in frame_map: 
+        if frame_idx in frame_map:
             for item in frame_map[frame_idx]:
                 x1, y1, x2, y2 = map(int, item["bbox"])
                 typ = item.get("type")
 
-                if typ == "person":
+                if typ == "person": 
                     tid = str(item["tid"])
                     ppe_info = final_person_summary.get(tid, {})
                     has_full_ppe = ppe_info.get("PPE", False)
@@ -1040,7 +1132,7 @@ def process_video_with_gpt_pipeline(
                         for name, val in ppe_lines:
                             text = f"{name}: {'Y' if val else 'N'}"
                             (tw, th), bl = cv2.getTextSize(text, font, font_scale, thickness)
-                            text_sizes. append((tw, th, bl))
+                            text_sizes.append((tw, th, bl))
                             max_width = max(max_width, tw)
 
                         total_height = len(ppe_lines) * line_h
@@ -1050,7 +1142,7 @@ def process_video_with_gpt_pipeline(
                         block_y2 = block_y1 + total_height + padding
 
                         # Semi-transparent background
-                        overlay = frame. copy()
+                        overlay = frame.copy()
                         cv2.rectangle(overlay, (block_x1, block_y1), (block_x2, block_y2), (0, 0, 0), -1)
                         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
@@ -1061,28 +1153,24 @@ def process_video_with_gpt_pipeline(
                                         font, font_scale, text_color, thickness)
                             y_text += line_h
 
-                elif typ == "vehicle": 
-                    # Get vehicle label from GPT
-                    draw_label = item.get("gpt_vehicle_label")
-                    if not draw_label: 
-                        gpt_res = item.get("gpt_result")
-                        if isinstance(gpt_res, dict):
-                            vehicles_dict = gpt_res.get("vehicles", {})
-                            if vehicles_dict:
-                                draw_label = max(vehicles_dict. items(), key=lambda kv: kv[1])[0]
-                    if not draw_label: 
-                        draw_label = "Vehicle"
+                elif typ == "vehicle":
+                    tid = item["tid"]
+                    # Fast O(1) lookup - use cached label or fall back to "vehicle"
+                    draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "vehicle")
+
+                    # Format label for display:  replace underscores with spaces and capitalize words
+                    display_label = draw_label.replace("_", " ").title()
 
                     color = get_vehicle_color()
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
-                    cv2.putText(frame, draw_label, (x1, y1 - 10),
+                    cv2.putText(frame, display_label, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
 
         out.write(frame)
 
     cap.release()
     out.release()
-    timings["annotate_total"] = time. time() - annotate_start
+    timings["annotate_total"] = time.time() - annotate_start
     logger.info(f"✅ Phase 4 complete: Video annotated in {timings['annotate_total']:.2f}s")
 
     timings["total"] = time.time() - start_total
@@ -1093,25 +1181,24 @@ def process_video_with_gpt_pipeline(
 
     return {
         "json_output": json_output,
-        "final_person_summary":  final_person_summary,
-        "vehicle_counts": vehicle_counts,
+        "final_person_summary": final_person_summary,
+        "vehicle_counts":  vehicle_counts,
         "unique_persons": unique_persons,
-        "unique_vehicles":  unique_vehicles,
+        "unique_vehicles": unique_vehicles,
         "total_frames": frame_idx,
         "timings": timings,
         "video_metadata": {
             "width": W,
-            "height": H,
-            "fps":  fps,
+            "height":  H,
+            "fps": fps,
             "duration": frame_idx / fps if fps > 0 else 0
         }
     }
 
-
 # =================================================
 # API ENDPOINTS
 # =================================================
-@app. get("/")
+@app.get("/")
 def read_root():
     return {
         "message":  "PPE Detection API with YOLO + Bedrock Nova Lite Vision Pipeline",
@@ -1280,11 +1367,11 @@ async def upload_video(
             raise HTTPException(status_code=500, detail="S3 client not initialized")
 
         # Validate file
-        if not video. filename: 
+        if not video.filename: 
             raise HTTPException(status_code=400, detail="No filename provided")
 
-        allowed_extensions = ['.mp4', '. avi', '.mov', '.mkv', '.flv', '.wmv', '.webm']
-        file_ext = os.path. splitext(video. filename)[1].lower()
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm']
+        file_ext = os.path.splitext(video.filename)[1].lower()
 
         if file_ext not in allowed_extensions:
             raise HTTPException(
@@ -1331,7 +1418,7 @@ async def upload_video(
 
         # Upload to S3
         print(f"☁️ Uploading to S3 bucket:  {S3_BUCKET}...")
-        phase2_start = time. time()
+        phase2_start = time.time()
 
         try:
             transfer_config = boto3.s3.transfer.TransferConfig(
@@ -1362,8 +1449,8 @@ async def upload_video(
             logger.error("AWS credentials not found")
             raise HTTPException(status_code=500, detail="AWS credentials not found")
         except ClientError as e: 
-            error_code = e. response. get('Error', {}).get('Code', 'Unknown')
-            error_message = e. response.get('Error', {}).get('Message', str(e))
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', str(e))
             logger.error(f"S3 ClientError: {error_code} - {error_message}")
             raise HTTPException(status_code=500, detail=f"S3 upload failed: {error_code} - {error_message}")
         except Exception as e: 
@@ -1371,9 +1458,9 @@ async def upload_video(
             raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
 
         # Cleanup temp file
-        if temp_path and os. path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             try:
-                os. remove(temp_path)
+                os.remove(temp_path)
             except Exception as e:
                 logger.warning(f"Failed to remove temp file: {e}")
             temp_path = None
@@ -1409,7 +1496,7 @@ async def upload_video(
         raise
     except Exception as e:
         # Log the full traceback for unexpected errors
-        logger. error(f"Unexpected error in upload-video: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Unexpected error in upload-video: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
     finally:
         # Always cleanup temp file
@@ -1484,7 +1571,7 @@ async def process_video(data: S3UriInput):
 
         # Create temp directories for crops
         crop_base_dir = tempfile.mkdtemp(prefix="person_crops_")
-        veh_crop_base_dir = tempfile. mkdtemp(prefix="vehicle_crops_")
+        veh_crop_base_dir = tempfile.mkdtemp(prefix="vehicle_crops_")
         temp_output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         # Process video
@@ -1506,7 +1593,7 @@ async def process_video(data: S3UriInput):
 
         # Convert to web format
         conversion_start = time.time()
-        temp_converted_path = tempfile. NamedTemporaryFile(delete=False, suffix=".mp4").name
+        temp_converted_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         if convert_video_to_web_format(temp_output_path, temp_converted_path):
             os.remove(temp_output_path)
@@ -1517,7 +1604,7 @@ async def process_video(data: S3UriInput):
         else:
             logger.warning("⚠️ Using original video (conversion failed/skipped)")
             if temp_converted_path and os.path.exists(temp_converted_path):
-                os. remove(temp_converted_path)
+                os.remove(temp_converted_path)
                 temp_converted_path = None
 
         # Upload annotated video to S3
@@ -1586,7 +1673,7 @@ async def process_video(data: S3UriInput):
         output_presigned_url = generate_presigned_url(bucket_name, output_key, expiration=86400)
         json_presigned_url = generate_presigned_url(bucket_name, json_key, expiration=86400) if json_s3_uri else None
 
-        timing["total_duration"] = time. time() - overall_start
+        timing["total_duration"] = time.time() - overall_start
 
         print(f"\n{'=' * 80}")
         print(f"✅ PROCESSING COMPLETE!")
