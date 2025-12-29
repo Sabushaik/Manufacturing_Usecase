@@ -275,12 +275,23 @@ Vehicles in background if clearly identifiable = count them
 IGNORE:  Toy vehicles, vehicles on posters/screens/images, parked personal cars
 
 ═══════════════════════════════════════════════════════════════
+PERSON COUNTING
+═══════════════════════════════════════════════════════════════
+
+Count the total number of PERSONS visible in the image:
+- Count all distinct persons visible, even partially
+- Include persons in background if clearly visible
+- If no persons visible, return 0
+- This is the count of people in THIS specific image/crop
+
+═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
 Return ONLY this JSON structure, no other text:
 
 {
+  "person_count": integer,
   "hardhat": boolean,
   "goggles":  boolean,
   "safety_vest": boolean,
@@ -291,17 +302,20 @@ Return ONLY this JSON structure, no other text:
 
 EXAMPLES: 
 
-Person with full PPE, one forklift: 
-{"hardhat": true, "goggles": true, "safety_vest": true, "gloves": true, "shoes": true, "vehicles": {"forklift": 1}}
+One person with full PPE, one forklift: 
+{"person_count": 1, "hardhat": true, "goggles": true, "safety_vest": true, "gloves": true, "shoes": true, "vehicles": {"forklift": 1}}
 
-Person missing gloves and goggles, two forklifts:
-{"hardhat": true, "goggles":  false, "safety_vest": true, "gloves": false, "shoes": true, "vehicles": {"forklift": 2}}
+One person missing gloves and goggles, two forklifts:
+{"person_count": 1, "hardhat": true, "goggles":  false, "safety_vest": true, "gloves": false, "shoes": true, "vehicles": {"forklift": 2}}
 
 No person visible, only excavator:
-{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {"excavator": 1}}
+{"person_count": 0, "hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {"excavator": 1}}
 
-No PPE visible, no vehicles:
-{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {}}
+Four persons visible in frame, mixed PPE:
+{"person_count": 4, "hardhat": true, "goggles": false, "safety_vest": true, "gloves": false, "shoes":  true, "vehicles": {}}
+
+No PPE visible, no vehicles, no persons:
+{"person_count": 0, "hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {}}
 
 RESPOND WITH JSON ONLY. NO EXPLANATIONS.""")
 
@@ -313,6 +327,7 @@ class S3UriInput(BaseModel):
 
 
 class PPEAndVehicleStatus(BaseModel):
+    person_count: int = 0
     hardhat: bool = False
     goggles: bool = False
     safety_vest: bool = False
@@ -1177,20 +1192,38 @@ def process_video_with_gpt_pipeline(
 
     # Get unique counts
     # Note: person_active_ids contains YOLO tracker IDs which can multiply due to re-entries/occlusions
-    # final_person_summary contains actual distinct persons verified by vision model
+    # Calculate average person count from vision model results across all crops
     tracking_ids_count = len(person_active_ids)
-    unique_persons = len(final_person_summary)  # Use vision model count for actual persons
+    
+    # Calculate average person count from vision model
+    person_counts_from_vision = []
+    for item in json_output:
+        if item.get("type") == "person" and item.get("gpt_result"):
+            gpt_res = item["gpt_result"]
+            if isinstance(gpt_res, dict) and "person_count" in gpt_res:
+                person_counts_from_vision.append(gpt_res["person_count"])
+    
+    if person_counts_from_vision:
+        # Average the person counts from all crops and round to nearest integer
+        unique_persons = round(sum(person_counts_from_vision) / len(person_counts_from_vision))
+        logger.info(f"📊 Vision model person counts: {len(person_counts_from_vision)} crops analyzed")
+        logger.info(f"📊 Average person count: {sum(person_counts_from_vision) / len(person_counts_from_vision):.2f} → {unique_persons}")
+    else:
+        # Fallback to final_person_summary count if no vision results available
+        unique_persons = len(final_person_summary)
+        logger.info(f"📊 No vision model person counts available, using PPE summary count: {unique_persons}")
+    
     unique_vehicles = len(vehicle_active_ids)
     
     logger.info(f"📊 YOLO Tracking IDs detected: {tracking_ids_count}")
-    logger.info(f"📊 Unique persons (from vision model): {unique_persons}")
+    logger.info(f"📊 Unique persons (from vision model average): {unique_persons}")
     logger.info(f"📊 Unique vehicles: {unique_vehicles}")
 
     return {
         "json_output": json_output,
         "final_person_summary": final_person_summary,
         "vehicle_counts":  vehicle_counts,
-        "unique_persons": unique_persons,  # Actual distinct persons from vision model
+        "unique_persons": unique_persons,  # Average person count from vision model across all crops
         "tracking_ids_count": tracking_ids_count,  # YOLO tracker IDs (can be higher than actual persons)
         "unique_vehicles": unique_vehicles,
         "total_frames": frame_idx,
@@ -1695,7 +1728,7 @@ async def process_video(data: S3UriInput):
         print(f"{'=' * 80}\n")
 
         logger.info(f"📊 YOLO Tracking IDs: {processing_results.get('tracking_ids_count', 'N/A')}")
-        logger.info(f"📊 Unique persons (from vision model): {processing_results['unique_persons']}")
+        logger.info(f"📊 Unique persons (from vision model average): {processing_results['unique_persons']}")
         logger.info(f"📊 Unique vehicles: {processing_results['unique_vehicles']}")
         logger.info(f"📊 Vehicle counts: {processing_results['vehicle_counts']}")
 
@@ -1718,7 +1751,7 @@ async def process_video(data: S3UriInput):
                     "iou_threshold": IOU_THRESHOLD
                 },
                 "unique_counts": {
-                    "persons": processing_results["unique_persons"],  # Actual distinct persons from vision model
+                    "persons": processing_results["unique_persons"],  # Average person count from vision model across crops
                     "tracking_ids": processing_results.get("tracking_ids_count"),  # YOLO tracker IDs
                     "vehicles":  processing_results["unique_vehicles"]
                 },
