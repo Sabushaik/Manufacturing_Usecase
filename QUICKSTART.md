@@ -56,8 +56,10 @@ Look for these in the response:
 
 **Also check console logs:**
 ```
+📊 Vision model person counts: 120 crops analyzed
+📊 Average person count: 4.67 → 5
 📊 YOLO Tracking IDs detected: 11      (debug info)
-📊 Unique persons (from vision model): 5  (actual count) ✅
+📊 Unique persons (from vision model average): 5  (actual count) ✅
 📊 Unique vehicles: 2
 ```
 
@@ -71,12 +73,15 @@ Look for these in the response:
 unique_persons = len(person_active_ids)  # Counted tracking IDs = 11
 
 # AFTER ✅  
-unique_persons = len(final_person_summary)  # Counts actual persons = 5
+# Vision model counts persons in each crop
+person_counts = [4, 5, 4, 5, 5, ...]  # From 120 crops
+unique_persons = round(average(person_counts))  # Average = 5
 ```
 
 ### Why This Works Better?
 - **YOLO Tracker**: Creates multiple IDs when person leaves/returns → 11 IDs
-- **Vision Model**: Recognizes same person across IDs → 5 actual persons ✅
+- **Vision Model**: Counts persons in each crop → Returns counts like 4, 5, 4, 5...
+- **Averaging**: (40 crops × 4) + (80 crops × 5) / 120 = 4.67 → **5 persons** ✅
 
 ### Real Example from Your Video
 ```

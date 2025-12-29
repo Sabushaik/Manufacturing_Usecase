@@ -21,28 +21,35 @@ Previously, the system was showing inflated person counts (e.g., "11 persons" wh
    - Multiple people overlap temporarily
 
 ### The Solution
-The system now uses **two different counting methods**:
+The system now uses **vision model person counting with averaging**:
 
 1. **Tracking IDs Count** (`tracking_ids_count`): 
    - Number of unique YOLO tracking IDs detected
    - Can be higher than actual persons due to re-assignments
    - Useful for debugging tracking issues
 
-2. **Actual Person Count** (`unique_persons`):
-   - Number of distinct persons verified by the **vision model** (Amazon Bedrock Nova Lite)
-   - More accurate as it analyzes actual person appearance
+2. **Vision Model Person Count** (`unique_persons`):
+   - The vision model (Amazon Bedrock Nova Lite) counts persons in **each crop/frame**
+   - System calculates the **average** across all crops
+   - **Example**: 120 crops analyzed
+     - 40 crops report 4 persons
+     - 80 crops report 5 persons
+     - Average: (40×4 + 80×5) / 120 = 4.67 → **5 persons**
    - This is now the **primary count** returned by the API
 
 ### Example Output
 ```
+📊 Vision model person counts: 120 crops analyzed
+📊 Average person count: 4.67 → 5
 📊 YOLO Tracking IDs detected: 11
-📊 Unique persons (from vision model): 5
+📊 Unique persons (from vision model average): 5
 📊 Unique vehicles: 2
 ```
 
 In this example:
-- YOLO assigned 11 different tracking IDs throughout the video
-- The vision model confirmed only **5 distinct persons** actually exist
+- Vision model analyzed 120 person crops from the video
+- Average count across all crops: 4.67 → rounds to **5 persons**
+- YOLO assigned 11 different tracking IDs (debug info)
 - The API returns `unique_persons: 5` as the accurate count
 
 ## API Endpoints
@@ -75,11 +82,17 @@ Process a video with YOLO detection + Bedrock Nova Lite vision analysis.
 # OLD METHOD (inaccurate)
 unique_persons = len(person_active_ids)  # Counts YOLO tracking IDs
 
-# NEW METHOD (accurate)
-unique_persons = len(final_person_summary)  # Counts vision-verified persons
+# NEW METHOD (accurate - averaging vision model counts)
+person_counts_from_vision = []
+for item in json_output:
+    if item.get("gpt_result") and "person_count" in item["gpt_result"]:
+        person_counts_from_vision.append(item["gpt_result"]["person_count"])
+
+# Average and round to nearest integer
+unique_persons = round(sum(person_counts_from_vision) / len(person_counts_from_vision))
 ```
 
-The `final_person_summary` dictionary contains one entry per **distinct person** detected by the vision model, with their PPE compliance status.
+The vision model returns `person_count` for each crop, indicating how many persons are visible in that specific image. The system averages all these counts to get the final person count.
 
 ## Configuration
 - **YOLO Model**: `yolo_person_detection`
