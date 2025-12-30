@@ -509,6 +509,7 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             raw = raw.strip()
 
             parsed = json.loads(raw)
+            print("parsed",parsed)
             logger.info(f"Bedrock Nova Lite response parsed successfully: {parsed}")
             return PPEAndVehicleStatus(**parsed)
 
@@ -716,6 +717,7 @@ def process_video_with_gpt_pipeline(
         with_reid=False,
         model="auto"
     ))
+
     vehicle_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
         track_high_thresh=0.6,
@@ -730,6 +732,7 @@ def process_video_with_gpt_pipeline(
         with_reid=False,
         model="auto"
     ))
+
     # Open video
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -945,6 +948,9 @@ def process_video_with_gpt_pipeline(
     # =================================================
     # PHASE 3: Summarize Results
     # =================================================
+    # =================================================
+    # PHASE 3: Summarize Results
+    # =================================================
     def summarize_results(data):
         person_results = defaultdict(list)
         vehicle_counts = defaultdict(int)
@@ -959,6 +965,17 @@ def process_video_with_gpt_pipeline(
                     vehicle_counts[v] += c
 
         final_summary = {}
+        # Using database column names
+        ppe_aggregate = {
+            "hard_hat": 0, 
+            "goggles": 0, 
+            "safety_vest": 0, 
+            "gloves": 0, 
+            "safety_shoes": 0,
+            "persons_detected": 0,
+            "list_of_vehicles": []
+        }
+
         for person_id, records in person_results.items():
             ppe_votes = {k: [] for k in ["hardhat", "goggles", "safety_vest", "gloves", "shoes"]}
             veh_local = defaultdict(int)
@@ -972,12 +989,31 @@ def process_video_with_gpt_pipeline(
             final_ppe = {k: (Counter(vals)[True] > Counter(vals)[False]) for k, vals in ppe_votes.items()}
             final_summary[person_id] = {
                 **final_ppe,
-                "PPE": all(final_ppe.values()),
-                "vehicles": dict(veh_local)
+                "PPE": all(final_ppe.values())
+                # "vehicles": dict(veh_local)
             }
-        return final_summary, dict(vehicle_counts)
 
-    final_person_summary, vehicle_counts = summarize_results(json_output)
+            # Aggregate PPE counts - map to database column names
+            if final_ppe.get("hardhat"):
+                ppe_aggregate["hard_hat"] += 1
+            if final_ppe.get("goggles"):
+                ppe_aggregate["goggles"] += 1
+            if final_ppe.get("safety_vest"):
+                ppe_aggregate["safety_vest"] += 1
+            if final_ppe.get("gloves"):
+                ppe_aggregate["gloves"] += 1
+            if final_ppe.get("shoes"):
+                ppe_aggregate["safety_shoes"] += 1
+
+            ppe_aggregate["persons_detected"] += 1
+
+        # Add vehicle list to aggregate summary
+        ppe_aggregate["list_of_vehicles"] = list(vehicle_counts.keys())
+
+        return final_summary, dict(vehicle_counts), ppe_aggregate
+
+    final_person_summary, vehicle_counts, ppe_aggregate_summary = summarize_results(json_output)
+ 
 
     # =================================================
     # PHASE 4: Annotate Video
@@ -990,13 +1026,27 @@ def process_video_with_gpt_pipeline(
     for item in json_output:
         frame_map[item["frame_id"]].append(item)
 
-    # Build vehicle label map for O(1) lookups during annotation
-    vehicle_label_map = {}
+    # # Build vehicle label map for O(1) lookups during annotation
+    # vehicle_label_map = {}
+    # for item in json_output:
+    #     if item.get("type") == "vehicle" and item.get("gpt_vehicle_label"):
+    #         tid = item["tid"]
+    #         if tid not in vehicle_label_map:
+    #             vehicle_label_map[tid] = item["gpt_vehicle_label"]
+
+    vehicle_labels_per_tid = defaultdict(list)
+
     for item in json_output:
-        if item.get("type") == "vehicle" and item.get("gpt_vehicle_label"):
-            tid = item["tid"]
-            if tid not in vehicle_label_map:
-                vehicle_label_map[tid] = item["gpt_vehicle_label"]
+        if item["type"] == "vehicle" and item.get("gpt_vehicle_label"):
+            vehicle_labels_per_tid[item["tid"]].append(item["gpt_vehicle_label"])
+    
+    final_vehicle_counts = defaultdict(int)
+    vehicle_label_map = {}
+    
+    for tid, labels in vehicle_labels_per_tid.items():
+        dominant_label = Counter(labels).most_common(1)[0][0]
+        final_vehicle_counts[dominant_label] += 1
+        vehicle_label_map[tid] = dominant_label
 
     logger.info(f"   Vehicle label map: {len(vehicle_label_map)} unique vehicle types identified")
 
@@ -1108,9 +1158,26 @@ def process_video_with_gpt_pipeline(
     unique_persons = len(person_active_ids)
     unique_vehicles = len(vehicle_active_ids)
 
+    # return {
+    #     "json_output": json_output,
+    #     "final_person_summary": final_person_summary,
+    #     "vehicle_counts":  vehicle_counts,
+    #     "unique_persons": unique_persons,
+    #     "unique_vehicles": unique_vehicles,
+    #     "total_frames": frame_idx,
+    #     "timings": timings,
+    #     "video_metadata": {
+    #         "width": W,
+    #         "height":  H,
+    #         "fps": fps,
+    #         "duration": frame_idx / fps if fps > 0 else 0
+    #     }
+    # }
+
     return {
         "json_output": json_output,
         "final_person_summary": final_person_summary,
+        "ppe_aggregate_summary": ppe_aggregate_summary,
         "vehicle_counts":  vehicle_counts,
         "unique_persons": unique_persons,
         "unique_vehicles": unique_vehicles,
@@ -1123,7 +1190,6 @@ def process_video_with_gpt_pipeline(
             "duration": frame_idx / fps if fps > 0 else 0
         }
     }
-
 # =================================================
 # API ENDPOINTS
 # =================================================
@@ -1436,11 +1502,114 @@ async def upload_video(
                 logger. warning(f"Failed to cleanup temp file: {e}")
 
 
+from pydantic import BaseModel, validator
+from typing import Optional
+from urllib.parse import urlparse, unquote
+import aiohttp
+
+
+class VideoInput(BaseModel):
+    """Accept either S3 URI or Presigned URL"""
+    video_uri: str
+
+    @validator('video_uri')
+    def validate_uri(cls, v):
+        if not v.startswith('s3://') and not v.startswith('https://'):
+            raise ValueError('video_uri must be an S3 URI (s3://) or presigned URL (https://)')
+        return v
+
+
+def parse_s3_uri(s3_uri: str) -> tuple: 
+    """Parse s3://bucket/key format"""
+    s3_path = s3_uri.replace("s3://", "")
+    bucket_name = s3_path.split("/")[0]
+    object_key = "/".join(s3_path.split("/")[1:])
+    return bucket_name, object_key
+
+
+def parse_presigned_url(presigned_url: str) -> tuple:
+    """
+    Parse presigned URL to extract bucket and key. 
+    Handles multiple URL formats:
+    - bucket.s3.amazonaws.com/key (no region)
+    - bucket.s3.region.amazonaws.com/key (with region)
+    - s3.amazonaws.com/bucket/key (path style, no region)
+    - s3.region.amazonaws.com/bucket/key (path style, with region)
+    """
+    parsed = urlparse(presigned_url)
+    hostname = parsed.hostname
+    path = unquote(parsed. path)
+
+    # Format: bucket.s3.amazonaws.com (no region - YOUR CASE)
+    if hostname. endswith('.s3.amazonaws.com'):
+        bucket = hostname. replace('.s3.amazonaws.com', '')
+        key = path. lstrip('/')
+        return bucket, key
+
+    # Format: bucket.s3.region.amazonaws.com (with region)
+    if '. s3.' in hostname and hostname.endswith('. amazonaws.com'):
+        bucket = hostname.split('.s3.')[0]
+        key = path.lstrip('/')
+        return bucket, key
+
+    # Format: s3.amazonaws.com/bucket/key (path style, no region)
+    if hostname == 's3.amazonaws.com':
+        path_parts = path.lstrip('/').split('/', 1)
+        bucket = path_parts[0]
+        key = path_parts[1] if len(path_parts) > 1 else ''
+        return bucket, key
+
+    # Format: s3.region.amazonaws.com/bucket/key (path style, with region)
+    if hostname.startswith('s3.') and hostname.endswith('.amazonaws.com'):
+        path_parts = path. lstrip('/').split('/', 1)
+        bucket = path_parts[0]
+        key = path_parts[1] if len(path_parts) > 1 else ''
+        return bucket, key
+
+    # Format: bucket.s3-accelerate.amazonaws.com
+    if '. s3-accelerate. amazonaws.com' in hostname:
+        bucket = hostname.replace('.s3-accelerate.amazonaws.com', '')
+        key = path.lstrip('/')
+        return bucket, key
+
+    raise ValueError(f"Unrecognized presigned URL format: {presigned_url}")
+
+
+async def download_from_presigned_url(presigned_url: str, dest_path: str) -> None:
+    """Download file from presigned URL using async HTTP"""
+    timeout = aiohttp.ClientTimeout(total=3600)  # 1 hour timeout for large videos
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(presigned_url) as response:
+            if response.status == 403:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Presigned URL expired or access denied"
+                )
+            if response. status != 200:
+                raise HTTPException(
+                    status_code=response. status,
+                    detail=f"Failed to download from presigned URL: {response.reason}"
+                )
+
+            with open(dest_path, 'wb') as f:
+                async for chunk in response.content.iter_chunked(8192):
+                    f.write(chunk)
+
+
+def detect_input_type(uri: str) -> str:
+    """Detect whether input is S3 URI or presigned URL"""
+    if uri.startswith('s3://'):
+        return 's3_uri'
+    elif uri.startswith('https://') and 's3' in uri. lower():
+        return 'presigned_url'
+    else:
+        raise ValueError("Unknown URI format.  Must be s3:// or https: // presigned URL")
+
 
 @app.post("/process-video")
-async def process_video(data: S3UriInput):
+async def process_video(data: VideoInput):
     """Process video with YOLO detection + Bedrock Nova Lite Vision for PPE/Vehicle classification"""
-    api_start_time = datetime.now()
+    api_start_time = datetime. now()
     overall_start = time.time()
 
     print(f"\n{'=' * 80}")
@@ -1448,8 +1617,8 @@ async def process_video(data: S3UriInput):
     print(f"{'=' * 80}\n")
 
     timing = {
-        "api_invoked_at": api_start_time. isoformat(),
-        "s3_download_duration":  0,
+        "api_invoked_at": api_start_time.isoformat(),
+        "s3_download_duration": 0,
         "processing_duration": 0,
         "video_conversion_duration": 0,
         "s3_upload_video_duration": 0,
@@ -1463,37 +1632,45 @@ async def process_video(data: S3UriInput):
     crop_base_dir = None
     veh_crop_base_dir = None
 
-    try: 
+    try:
         if triton_client is None:
             raise HTTPException(status_code=500, detail="Triton client not initialized")
 
         if s3_client is None:
             raise HTTPException(status_code=500, detail="S3 client not initialized")
 
-        s3_uri = data.s3_uri
-        if not s3_uri.startswith("s3://"):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid S3 URI format. Expected:  s3://bucket-name/path/to/file"
-            )
+        video_uri = data. video_uri
+        input_type = detect_input_type(video_uri)
 
-        s3_path = s3_uri.replace("s3://", "")
-        bucket_name = s3_path.split("/")[0]
-        object_key = "/".join(s3_path. split("/")[1:])
+        # Parse bucket and key based on input type
+        if input_type == 's3_uri': 
+            bucket_name, object_key = parse_s3_uri(video_uri)
+            logger.info(f"📥 Input type: S3 URI")
+        else:  # presigned_url
+            try:
+                bucket_name, object_key = parse_presigned_url(video_uri)
+                logger.info(f"📥 Input type: Presigned URL")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-        # Download from S3
-        logger.info(f"📥 Downloading video from S3: {s3_uri}")
+        logger.info(f"📦 Bucket: {bucket_name}, Key: {object_key}")
+
+        # Download from S3 or presigned URL
+        logger.info(f"📥 Downloading video...")
         download_start = time.time()
 
-        temp_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+        temp_video_path = tempfile. NamedTemporaryFile(delete=False, suffix=". mp4").name
 
-        await asyncio.get_event_loop().run_in_executor(
-            thread_executor,
-            s3_client.download_file,
-            bucket_name,
-            object_key,
-            temp_video_path
-        )
+        if input_type == 's3_uri':
+            await asyncio.get_event_loop().run_in_executor(
+                thread_executor,
+                s3_client.download_file,
+                bucket_name,
+                object_key,
+                temp_video_path
+            )
+        else:  # presigned_url
+            await download_from_presigned_url(video_uri, temp_video_path)
 
         timing["s3_download_duration"] = time.time() - download_start
         logger.info(f"✅ Download completed in {timing['s3_download_duration']:.2f}s")
@@ -1501,11 +1678,11 @@ async def process_video(data: S3UriInput):
         # Create temp directories for crops
         crop_base_dir = tempfile.mkdtemp(prefix="person_crops_")
         veh_crop_base_dir = tempfile.mkdtemp(prefix="vehicle_crops_")
-        temp_output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+        temp_output_path = tempfile. NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         # Process video
-        logger. info("🚀 Starting YOLO + Bedrock Nova Lite Vision pipeline...")
-        processing_start = time.time()
+        logger.info("🚀 Starting YOLO + Bedrock Nova Lite Vision pipeline...")
+        processing_start = time. time()
 
         loop = asyncio.get_event_loop()
         processing_results = await loop.run_in_executor(
@@ -1521,14 +1698,14 @@ async def process_video(data: S3UriInput):
         logger.info(f"✅ Processing completed in {timing['processing_duration']:.2f}s")
 
         # Convert to web format
-        conversion_start = time.time()
+        conversion_start = time. time()
         temp_converted_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         if convert_video_to_web_format(temp_output_path, temp_converted_path):
             os.remove(temp_output_path)
             temp_output_path = temp_converted_path
             temp_converted_path = None
-            timing["video_conversion_duration"] = time.time() - conversion_start
+            timing["video_conversion_duration"] = time. time() - conversion_start
             logger.info(f"✅ Video conversion completed in {timing['video_conversion_duration']:.2f}s")
         else:
             logger.warning("⚠️ Using original video (conversion failed/skipped)")
@@ -1536,10 +1713,10 @@ async def process_video(data: S3UriInput):
                 os.remove(temp_converted_path)
                 temp_converted_path = None
 
-        # Upload annotated video to S3
-        upload_video_start = time.time()
-        base_name = os.path.splitext(object_key)[0]
-        output_key = f"{base_name}_annotated.mp4"
+        # Upload annotated video to S3 (same bucket)
+        upload_video_start = time. time()
+        base_name = os. path.splitext(object_key)[0]
+        output_key = f"{base_name}_annotated. mp4"
 
         output_s3_uri = await upload_to_s3_async(
             temp_output_path,
@@ -1558,9 +1735,10 @@ async def process_video(data: S3UriInput):
 
             results_data = {
                 "video_info": {
-                    "input_s3_uri": s3_uri,
+                    "input_uri": video_uri,
+                    "input_type": input_type,
                     "output_s3_uri": output_s3_uri,
-                    "processed_at": datetime.now().isoformat(),
+                    "processed_at": datetime. now().isoformat(),
                     "total_frames": processing_results["total_frames"],
                     "duration_seconds": processing_results["video_metadata"]["duration"]
                 },
@@ -1569,14 +1747,15 @@ async def process_video(data: S3UriInput):
                     "vehicles": processing_results["unique_vehicles"]
                 },
                 "per_person_ppe_summary": processing_results["final_person_summary"],
-                "vehicle_counts": processing_results["vehicle_counts"],
+                "ppe_summary":  processing_results["ppe_aggregate_summary"],
+                "vehicle_counts":  processing_results["vehicle_counts"],
                 "config": {
                     "model_name": MODEL_NAME,
-                    "triton_server":  TRITON_URL,
+                    "triton_server": TRITON_URL,
                     "vision_model": "amazon.nova-lite-v1:0",
                     "vision_provider": "Amazon Bedrock",
-                    "confidence_threshold": CONF_THRESH,
-                    "iou_threshold": IOU_THRESHOLD
+                    "confidence_threshold":  CONF_THRESH,
+                    "iou_threshold":  IOU_THRESHOLD
                 },
                 "detailed_timings": processing_results["timings"]
             }
@@ -1589,14 +1768,14 @@ async def process_video(data: S3UriInput):
 
         # Cleanup
         import shutil
-        if temp_video_path and os.path.exists(temp_video_path):
+        if temp_video_path and os.path. exists(temp_video_path):
             os.remove(temp_video_path)
         if temp_output_path and os.path.exists(temp_output_path):
             os.remove(temp_output_path)
         if crop_base_dir and os.path.exists(crop_base_dir):
             shutil.rmtree(crop_base_dir)
-        if veh_crop_base_dir and os.path. exists(veh_crop_base_dir):
-            shutil. rmtree(veh_crop_base_dir)
+        if veh_crop_base_dir and os.path.exists(veh_crop_base_dir):
+            shutil.rmtree(veh_crop_base_dir)
 
         # Generate presigned URLs
         output_presigned_url = generate_presigned_url(bucket_name, output_key, expiration=86400)
@@ -1608,9 +1787,9 @@ async def process_video(data: S3UriInput):
         print(f"✅ PROCESSING COMPLETE!")
         print(f"{'=' * 80}")
         print(f"⏱️ Total time: {timing['total_duration']:.2f}s")
-        print(f"   Download: {timing['s3_download_duration']:.2f}s")
-        print(f"   Processing: {timing['processing_duration']:.2f}s")
-        print(f"   Conversion:  {timing['video_conversion_duration']:.2f}s")
+        print(f"   Download:  {timing['s3_download_duration']:.2f}s")
+        print(f"   Processing:  {timing['processing_duration']:.2f}s")
+        print(f"   Conversion: {timing['video_conversion_duration']:.2f}s")
         print(f"   Upload Video: {timing['s3_upload_video_duration']:.2f}s")
         print(f"   Upload JSON: {timing['s3_upload_json_duration']:.2f}s")
         print(f"{'=' * 80}\n")
@@ -1623,17 +1802,18 @@ async def process_video(data: S3UriInput):
             status_code=200,
             content={
                 "message": "Successfully processed video with YOLO + Bedrock Nova Lite Vision pipeline",
-                "input_s3_uri": s3_uri,
+                "input_uri": video_uri,
+                "input_type": input_type,
                 "output_s3_uri": output_s3_uri,
                 "output_presigned_url": output_presigned_url,
                 "results_json_uri": json_s3_uri,
                 "results_json_presigned_url": json_presigned_url,
-                "presigned_url_expiration":  "24 hours",
+                "presigned_url_expiration": "24 hours",
                 "config": {
                     "model_name": MODEL_NAME,
-                    "triton_server":  TRITON_URL,
-                    "vision_model": "amazon.nova-lite-v1:0",
-                    "vision_provider": "Amazon Bedrock",
+                    "triton_server": TRITON_URL,
+                    "vision_model":  "amazon.nova-lite-v1:0",
+                    "vision_provider":  "Amazon Bedrock",
                     "confidence_threshold":  CONF_THRESH,
                     "iou_threshold": IOU_THRESHOLD
                 },
@@ -1642,7 +1822,8 @@ async def process_video(data: S3UriInput):
                     "vehicles":  processing_results["unique_vehicles"]
                 },
                 "per_person_ppe_summary": processing_results["final_person_summary"],
-                "vehicle_counts":  processing_results["vehicle_counts"],
+                "ppe_summary":  processing_results["ppe_aggregate_summary"],
+                "vehicle_counts": processing_results["vehicle_counts"],
                 "video_metadata": processing_results["video_metadata"],
                 "timing": timing,
                 "detailed_processing_timings": processing_results["timings"]
@@ -1652,27 +1833,25 @@ async def process_video(data: S3UriInput):
     except HTTPException: 
         raise
     except Exception as e: 
-        logger.error(f"❌ Error processing video: {str(e)}", exc_info=True)
+        logger.error(f"❌ Error processing video:  {str(e)}", exc_info=True)
 
         # Cleanup on error
         import shutil
         if temp_video_path and os.path.exists(temp_video_path):
             os.remove(temp_video_path)
-        if temp_output_path and os.path. exists(temp_output_path):
+        if temp_output_path and os. path.exists(temp_output_path):
             os.remove(temp_output_path)
-        if temp_converted_path and os.path.exists(temp_converted_path):
+        if temp_converted_path and os.path. exists(temp_converted_path):
             os.remove(temp_converted_path)
-        if crop_base_dir and os. path.exists(crop_base_dir):
+        if crop_base_dir and os.path.exists(crop_base_dir):
             shutil.rmtree(crop_base_dir)
-        if veh_crop_base_dir and os.path.exists(veh_crop_base_dir):
+        if veh_crop_base_dir and os. path.exists(veh_crop_base_dir):
             shutil.rmtree(veh_crop_base_dir)
 
         raise HTTPException(
             status_code=500,
-            detail=f"Video processing failed: {str(e)}"
+            detail=f"Video processing failed:  {str(e)}"
         )
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
