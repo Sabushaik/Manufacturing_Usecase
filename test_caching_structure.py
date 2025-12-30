@@ -42,23 +42,23 @@ print("\nTest 2: Checking build_system_messages structure...")
 SYSTEM_TEXT = "You are a vision analysis system."
 
 def build_system_messages_mock(sample_cache):
-    """Mock version of build_system_messages"""
-    msgs = [{"type": "text", "text": SYSTEM_TEXT}]
+    """Mock version of build_system_messages with correct Bedrock format"""
+    msgs = [{"text": SYSTEM_TEXT}]
     
     for label, encoded_images in sample_cache.items():
         for img_b64 in encoded_images:
-            msgs.append({"type": "text", "text": f"Example: {label}"})
+            msgs.append({"text": f"Example: {label}"})
             msgs.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": img_b64
+                "image": {
+                    "format": "jpeg",
+                    "source": {
+                        "bytes": img_b64
+                    }
                 }
             })
     
     if msgs:
-        msgs[-1]["cachePoint"] = "ephemeral"
+        msgs[-1]["cachePoint"] = {"type": "default"}
     
     return msgs
 
@@ -66,9 +66,9 @@ def build_system_messages_mock(sample_cache):
 mock_cache = {k: ["dummy_base64_" + k] for k in SAMPLES.keys()}
 system_msgs = build_system_messages_mock(mock_cache)
 
-# Count content blocks
-text_blocks = sum(1 for msg in system_msgs if msg.get("type") == "text")
-image_blocks = sum(1 for msg in system_msgs if msg.get("type") == "image")
+# Count content blocks (check for 'text' or 'image' keys, not 'type')
+text_blocks = sum(1 for msg in system_msgs if "text" in msg)
+image_blocks = sum(1 for msg in system_msgs if "image" in msg)
 
 # Expected: 1 system text + 12 example texts + 12 images = 25 total (13 text, 12 images)
 expected_text = 1 + 12  # system text + 12 example labels
@@ -80,7 +80,7 @@ assert image_blocks == expected_images, f"Expected {expected_images} image block
 # Verify cachePoint is on the last message
 last_msg = system_msgs[-1]
 assert "cachePoint" in last_msg, "cachePoint not found in last message"
-assert last_msg["cachePoint"] == "ephemeral", "cachePoint should be 'ephemeral'"
+assert last_msg["cachePoint"] == {"type": "default"}, f"cachePoint should be {{'type': 'default'}}"
 
 print(f"✅ System messages structure correct:")
 print(f"   - {text_blocks} text blocks (1 system + 12 labels)")

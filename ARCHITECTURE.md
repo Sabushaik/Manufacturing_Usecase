@@ -30,14 +30,15 @@
 │                           ▼                                                  │
 │  Step 3: Build System Messages                                              │
 │  ┌──────────────────────────────────────────────────────────────┐          │
-│  │ Content Block 1:  {"type": "text", "text": SYSTEM_TEXT}      │          │
-│  │ Content Block 2:  {"type": "text", "text": "Example: hardhat"}│         │
-│  │ Content Block 3:  {"type": "image", "source": {base64}}      │          │
-│  │ Content Block 4:  {"type": "text", "text": "Example: goggles"}│         │
-│  │ Content Block 5:  {"type": "image", "source": {base64}}      │          │
+│  │ Content Block 1:  {"text": SYSTEM_TEXT}                       │          │
+│  │ Content Block 2:  {"text": "Example: hardhat"}                │          │
+│  │ Content Block 3:  {"image": {"format": "jpeg", ...}}          │          │
+│  │ Content Block 4:  {"text": "Example: goggles"}                │          │
+│  │ Content Block 5:  {"image": {"format": "jpeg", ...}}          │          │
 │  │ ...                                                            │          │
-│  │ Content Block 25: {"type": "image", "source": {base64},       │          │
-│  │                    "cachePoint": "ephemeral"} ◄─── MARKER!    │          │
+│  │ Content Block 25: {"image": {...},                            │          │
+│  │                    "cachePoint": {"type": "default"}}          │          │
+│  │                    ◄─── CACHE MARKER!                         │          │
 │  └──────────────────────────────────────────────────────────────┘          │
 │                           ▼                                                  │
 │  Step 4: Store Globally                                                     │

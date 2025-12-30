@@ -34,26 +34,28 @@ Total: 12 images (5 PPE + 7 vehicles)
 Updated to use proper Bedrock content block format with cachePoint:
 ```python
 def build_system_messages(sample_cache):
-    msgs = [{"type": "text", "text": SYSTEM_TEXT}]
+    msgs = [{"text": SYSTEM_TEXT}]
     
     for label, encoded_images in sample_cache.items():
         for img_b64 in encoded_images:
-            msgs.append({"type": "text", "text": f"Example: {label}"})
+            msgs.append({"text": f"Example: {label}"})
             msgs.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": img_b64
+                "image": {
+                    "format": "jpeg",
+                    "source": {
+                        "bytes": img_b64
+                    }
                 }
             })
     
     # Add cache point marker for prompt caching
     if msgs:
-        msgs[-1]["cachePoint"] = "ephemeral"
+        msgs[-1]["cachePoint"] = {"type": "default"}
     
     return msgs
 ```
+
+**Note**: Bedrock system content blocks should NOT have a 'type' key at the root level. Use 'text' or 'image' directly as the root key.
 
 ### 3. Bedrock API Call
 **File**: `main.py` (lines 447-524)
