@@ -176,134 +176,50 @@ HARDCODED_CONFIG = {
 # =================================================
 # GPT SYSTEM PROMPT (from Jupyter notebook)
 # =================================================
-SYSTEM_TEXT =("""You are an industrial safety vision analysis system specialized in PPE compliance and vehicle detection. 
-
-TASK: Analyze the image and return ONLY valid JSON with PPE status and vehicle counts.
-
-═══════════════════════════════════════════════════════════════
-PPE DETECTION RULES
-═══════════════════════════════════════════════════════════════
-
-HARDHAT (true/false):
-- TRUE: Rigid protective helmet with dome shape, worn ON HEAD
-- Colors: White, yellow, orange, blue, red common in industrial settings
-- FALSE: Baseball caps, beanies, hoods, bandanas, bare head
-
-GOGGLES (true/false):
-- TRUE: Safety glasses/goggles worn OVER THE EYES with these features:
-  • Wrap-around design or side shields
-  • Clear, tinted, yellow, or mirrored lenses
-  • Thick sturdy frames (thicker than regular glasses)
-  • Sealed goggles with elastic strap around head
-  • Prescription safety glasses WITH side shields
-  • Welding goggles or face shield with glasses underneath
-- FALSE: 
-  • Goggles pushed UP on forehead
- 
-
-SAFETY_VEST (true/false):
-- TRUE: High-visibility vest/jacket worn ON TORSO, typically neon yellow/orange with reflective strips
-- Also accept: Full-body coveralls in high-vis colors, reflective work jackets
-- FALSE: Regular clothing, dark jackets without reflective elements
-
-GLOVES (true/false):
-- TRUE: Work gloves covering BOTH HANDS - leather, rubber, nitrile, or fabric
-- Look for: Different texture/color than skin on hands
-- FALSE: Bare hands, gloves held/carried, single glove only
-
-SHOES (true/false):
-- TRUE: Closed-toe industrial footwear - safety boots, work shoes with thick soles
-- Look for:  Ankle coverage, reinforced toe area, sturdy construction
-- FALSE:  Sandals, slippers, sneakers, bare feet, feet not visible → false
-
-CRITICAL PPE RULES:
-1. PPE must be ACTIVELY WORN in correct position - not carried, hanging, or misplaced
-2. If body part is NOT VISIBLE, return false for that PPE item
-3. If image is blurry/unclear for specific item, return false
-4. Partial wear (e.g., hardhat tilted back, vest unbuttoned) → still true if on body
-
-═══════════════════════════════════════════════════════════════
-VEHICLE DETECTION RULES
-═══════════════════════════════════════════════════════════════
-
-VEHICLE TYPES TO DETECT: 
-
-forklift: 
-- Compact vehicle with vertical mast and two horizontal forks at front
-- Usually has counterweight at rear, small turning radius
-- Found indoors in warehouses/factories
-
-excavator:
-- Tracked or wheeled base with rotating cab
-- Long articulated arm (boom + stick) ending in bucket
-- Hydraulic cylinders visible on arm
-
-bulldozer:
-- Heavy tracked vehicle with large flat blade at front
-- Low profile, tracks on both sides
-- Blade is wide and curved
-
-crane:
-- Vehicle or stationary structure with long boom/arm
-- Has cables, hooks, or lifting mechanism
-- May be mobile (truck-mounted) or tower crane
-
-cement_mixer_truck:
-- Truck chassis with large rotating drum
-- Drum is cylindrical with spiral fins inside
-- Chute at rear for pouring
-
-road_roller:
-- Large cylindrical drum(s) instead of wheels
-- Used for compacting surfaces
-- May have single or double drums
-
-tractor:
-- Large rear wheels, smaller front wheels
-- Open or enclosed cab
-- Agricultural or industrial use
-
-cargo_truck:
-- Standard truck with cabin and cargo area
-- Box truck, flatbed, or container carrier
-- No special industrial attachments
-
-VEHICLE COUNTING RULES:
-1. Count each DISTINCT vehicle separately
-2. Same vehicle partially visible in frame = count as 1
-3. Vehicles in background if clearly identifiable = count them
-4. IGNORE:  Toy vehicles, vehicles on posters/screens/images, parked personal cars
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
-
-Return ONLY this JSON structure, no other text:
-
-{
-  "hardhat": boolean,
-  "goggles":  boolean,
-  "safety_vest": boolean,
-  "gloves": boolean,
-  "shoes":  boolean,
-  "vehicles": {"vehicle_type": count}
-}
-
-EXAMPLES: 
-
-Person with full PPE, one forklift: 
-{"hardhat": true, "goggles": true, "safety_vest": true, "gloves": true, "shoes": true, "vehicles": {"forklift": 1}}
-
-Person missing gloves and goggles, two forklifts:
-{"hardhat": true, "goggles":  false, "safety_vest": true, "gloves": false, "shoes": true, "vehicles": {"forklift": 2}}
-
-No person visible, only excavator:
-{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {"excavator": 1}}
-
-No PPE visible, no vehicles:
-{"hardhat": false, "goggles": false, "safety_vest": false, "gloves": false, "shoes":  false, "vehicles": {}}
-
-RESPOND WITH JSON ONLY.  NO EXPLANATIONS.""")
+SYSTEM_TEXT = (
+    "You are a vision analysis system.\n"
+    "Analyze images and return ONLY valid JSON.\n\n"
+    "IMPORTANT:\n"
+    "Use the PROVIDED SAMPLE IMAGES as visual guidance to understand\n"
+    "how industrial PPE AND manufacturing vehicles generally look\n"
+    "in real manufacturing and construction environments.\n"
+    "Do NOT restrict detection only to exact sample matches.\n\n"
+    "GENERAL PPE APPEARANCE GUIDELINES:\n"
+    "- Gloves:  Tight-fitting hand coverings with a fabric, knit, rubber, or coated base.\n"
+    "- Goggles: Clear or lightly tinted lenses with a protective plastic frame or seal.\n"
+    "- Hardhat: Rigid protective helmet with a smooth or slightly ridged dome.\n"
+    "- Safety vest: High-visibility outer garment or industrial protective coverall.\n"
+    "- Shoes: Closed-toe industrial footwear with thick or reinforced sole.\n\n"
+    "GENERAL VEHICLE APPEARANCE GUIDELINES (BY TYPE):\n"
+    "- Bulldozer: Heavy tracked vehicle with a wide flat metal blade at the front; low-profile; tracks.\n"
+    "- Excavator:  Tracked or wheeled, rotating upper body; long arm with digging bucket.\n"
+    "- Cement Mixer Truck: Truck with a large rotating cylindrical drum on the rear.\n"
+    "- Mobile Concrete Mixer / Site Mixer: Smaller mixer with prominent drum/chute on site.\n"
+    "- Crane: Vehicle with extended boom/telescopic arm, hook/pulley/cable.\n"
+    "- Forklift: Compact, two parallel forks at front, upright lifting mast.\n"
+    "- Road Roller / Compactor: Large cylindrical rollers instead of wheels.\n"
+    "- Tractor: Large rear wheels, smaller front wheels; open/semi-enclosed seat.\n"
+    "- Cargo Truck: Wheeled truck with front cabin and rear container/bed; no special attachments.\n\n"
+    "NEGATIVE VISUAL CONSTRAINTS:\n"
+    "- No caps, sunglasses, casual clothing, sandals, or slippers as PPE.\n"
+    "- Ignore toys, posters, or vehicle images on screens.\n\n"
+    "PERSON-CENTRIC PPE RULES:\n"
+    "- PPE must be correctly worn on a visible person.\n"
+    "- Misplaced, carried, or partially worn PPE → false.\n\n"
+    "VISIBILITY RULES:\n"
+    "- PPE or vehicle must be ≥50% visible.\n"
+    "- Heavy blur, extreme occlusion, or unclear object → false / not counted.\n\n"
+    "VEHICLE COUNTING RULES:\n"
+    "- Count only clearly visible real vehicles.\n"
+    "- Group vehicles by detected type.\n\n"
+    "OUTPUT RULES:\n"
+    "- Always return all PPE keys.\n"
+    "- Vehicles must be returned as a dictionary of {vehicle_type: count}.\n\n"
+    "Return JSON ONLY with:\n"
+    "- hardhat, goggles, safety_vest, gloves, shoes (boolean)\n"
+    "- vehicles:  { \"vehicle_type\":  count }\n\n"
+    "No explanations."
+)
 
 # =================================================
 # PYDANTIC MODELS
@@ -788,9 +704,9 @@ def process_video_with_gpt_pipeline(
     # Initialize trackers
     person_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
-        track_high_thresh=0.25,
-        track_low_thresh=0.10,
-        new_track_thresh=0.25,
+        track_high_thresh=0.6,
+        track_low_thresh=0.3,
+        new_track_thresh=0.6,
         track_buffer=300,
         match_thresh=0.65,
         fuse_score=True,
@@ -800,14 +716,13 @@ def process_video_with_gpt_pipeline(
         with_reid=False,
         model="auto"
     ))
-
     vehicle_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
-        track_high_thresh=0.25,
-        track_low_thresh=0.10,
-        new_track_thresh=0.25,
-        track_buffer=200,
-        match_thresh=0.7,
+        track_high_thresh=0.6,
+        track_low_thresh=0.3,
+        new_track_thresh=0.6,
+        track_buffer=300,
+        match_thresh=0.65,
         fuse_score=True,
         gmc_method=None,
         proximity_thresh=0.6,
@@ -815,7 +730,6 @@ def process_video_with_gpt_pipeline(
         with_reid=False,
         model="auto"
     ))
-
     # Open video
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -1155,16 +1069,31 @@ def process_video_with_gpt_pipeline(
 
                 elif typ == "vehicle":
                     tid = item["tid"]
-                    # Fast O(1) lookup - use cached label or fall back to "vehicle"
                     draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "vehicle")
-
-                    # Format label for display:  replace underscores with spaces and capitalize words
                     display_label = draw_label.replace("_", " ").title()
-
+                    
                     color = get_vehicle_color()
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
-                    cv2.putText(frame, display_label, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)  # Draw bounding box
+                    
+                    # Draw label inside bounding box with black background and white text
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.7
+                    font_thickness = 2
+                    (text_width, text_height), baseline = cv2.getTextSize(display_label, font, font_scale, font_thickness)
+                    
+                    # Position label with padding from top-left of box
+                    label_x = x1 + 5
+                    label_y = y1 + text_height + 8
+                    
+                    # Draw black background rectangle for text
+                    cv2.rectangle(frame, (label_x - 2, label_y - text_height - 4),
+                                  (label_x + text_width + 2, label_y + baseline + 2),
+                                  (0, 0, 0), -1)
+                    
+                    # Draw white text
+                    cv2.putText(frame, display_label, (label_x, label_y),
+                font, font_scale, (255, 255, 255), font_thickness)
+ 
 
         out.write(frame)
 
