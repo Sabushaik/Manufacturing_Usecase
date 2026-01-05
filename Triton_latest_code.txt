@@ -960,7 +960,7 @@ def process_video_with_gpt_pipeline(
                 "type": "vehicle",
                 "tid": int(final_vid),
                 "cls_id": -1,
-                "cls_name": "vehicle",
+                "cls_name": "Industrial Equipment",
                 "bbox": [to_py(x1), to_py(y1), to_py(x2), to_py(y2)],
                 "crop_path": crop_path
             })
@@ -1189,7 +1189,7 @@ def process_video_with_gpt_pipeline(
 
                 elif typ == "vehicle":
                     tid = item["tid"]
-                    draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "vehicle")
+                    draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "Industrial Equipment")
                     display_label = draw_label.replace("_", " ").title()
                     
                     color = get_vehicle_color()
