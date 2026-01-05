@@ -112,7 +112,7 @@ MODEL_NAME = "yolo_person_detection"
 
 TARGET_SIZE = 640
 PAD_VALUE = 114
-CONF_THRESH = 0.5
+CONF_THRESH = 0.65
 IOU_THRESHOLD = 0.90
 DIST_THRESHOLD = 50
 
@@ -176,49 +176,118 @@ HARDCODED_CONFIG = {
 # =================================================
 # GPT SYSTEM PROMPT (from Jupyter notebook)
 # =================================================
-SYSTEM_TEXT = (
-    "You are a vision analysis system.\n"
-    "Analyze images and return ONLY valid JSON.\n\n"
-    "IMPORTANT:\n"
-    "Use the PROVIDED SAMPLE IMAGES as visual guidance to understand\n"
-    "how industrial PPE AND manufacturing vehicles generally look\n"
-    "in real manufacturing and construction environments.\n"
-    "Do NOT restrict detection only to exact sample matches.\n\n"
-    "GENERAL PPE APPEARANCE GUIDELINES:\n"
-    "- Gloves:  Tight-fitting hand coverings with a fabric, knit, rubber, or coated base.\n"
-    "- Goggles: Clear or lightly tinted lenses with a protective plastic frame or seal.\n"
-    "- Hardhat: Rigid protective helmet with a smooth or slightly ridged dome.\n"
-    "- Safety vest: High-visibility outer garment or industrial protective coverall.\n"
-    "- Shoes: Closed-toe industrial footwear with thick or reinforced sole.\n\n"
-    "GENERAL VEHICLE APPEARANCE GUIDELINES (BY TYPE):\n"
-    "- Bulldozer: Heavy tracked vehicle with a wide flat metal blade at the front; low-profile; tracks.\n"
-    "- Excavator:  Tracked or wheeled, rotating upper body; long arm with digging bucket.\n"
-    "- Cement Mixer Truck: Truck with a large rotating cylindrical drum on the rear.\n"
-    "- Mobile Concrete Mixer / Site Mixer: Smaller mixer with prominent drum/chute on site.\n"
-    "- Crane: Vehicle with extended boom/telescopic arm, hook/pulley/cable.\n"
-    "- Forklift: Compact, two parallel forks at front, upright lifting mast.\n"
-    "- Road Roller / Compactor: Large cylindrical rollers instead of wheels.\n"
-    "- Tractor: Large rear wheels, smaller front wheels; open/semi-enclosed seat.\n"
-    "- Cargo Truck: Wheeled truck with front cabin and rear container/bed; no special attachments.\n\n"
-    "NEGATIVE VISUAL CONSTRAINTS:\n"
-    "- No caps, sunglasses, casual clothing, sandals, or slippers as PPE.\n"
-    "- Ignore toys, posters, or vehicle images on screens.\n\n"
-    "PERSON-CENTRIC PPE RULES:\n"
-    "- PPE must be correctly worn on a visible person.\n"
-    "- Misplaced, carried, or partially worn PPE → false.\n\n"
-    "VISIBILITY RULES:\n"
-    "- PPE or vehicle must be ≥50% visible.\n"
-    "- Heavy blur, extreme occlusion, or unclear object → false / not counted.\n\n"
-    "VEHICLE COUNTING RULES:\n"
-    "- Count only clearly visible real vehicles.\n"
-    "- Group vehicles by detected type.\n\n"
-    "OUTPUT RULES:\n"
-    "- Always return all PPE keys.\n"
-    "- Vehicles must be returned as a dictionary of {vehicle_type: count}.\n\n"
-    "Return JSON ONLY with:\n"
-    "- hardhat, goggles, safety_vest, gloves, shoes (boolean)\n"
-    "- vehicles:  { \"vehicle_type\":  count }\n\n"
-    "No explanations."
+SYSTEM_TEXT = ("You are a vision analysis system for industrial safety compliance.\n"
+"Analyze images and return ONLY valid JSON.\n\n"
+"IMPORTANT:\n"
+"Use the PROVIDED SAMPLE IMAGES as visual guidance to understand\n"
+"how industrial PPE AND manufacturing vehicles generally look\n"
+"in real manufacturing and construction environments.\n"
+"Do NOT restrict detection only to exact sample matches.\n\n"
+"=== PPE DETECTION GUIDELINES ===\n\n"
+"1. SHOES (Industrial Footwear):\n"
+"   - TYPES: Steel-toe boots, safety shoes, work boots, closed-toe industrial footwear\n"
+"   - APPEARANCE: Thick soles, reinforced toe caps, sturdy construction, ankle or low-cut\n"
+"   - DETECTION RULES:\n"
+"     * If AT LEAST ONE shoe is clearly visible on a person → TRUE\n"
+"     * Common scenarios: Person standing (both visible), sitting/driving (one visible), walking (partial view)\n"
+"     * Look for: Visible footwear on feet, even if only one foot is in frame\n"
+"     * IGNORE: Casual sneakers, sandals, slippers, dress shoes\n"
+"     * FOR DRIVERS/SEATED WORKERS: One industrial shoe visible = TRUE\n\n"
+"2. GOGGLES / SAFETY GLASSES / EYE PROTECTION:\n"
+"   - TYPES: Safety goggles, safety glasses, face shields, protective eyewear\n"
+"   - APPEARANCE: \n"
+"     * Goggles: Wrap-around seal, clear/tinted lenses, elastic strap\n"
+"     * Safety Glasses: Plastic frame, side shields, clear/tinted lenses\n"
+"     * Face Shields: Clear visor covering entire face\n"
+"   - DETECTION RULES:\n"
+"     * ANY visible eye protection worn on face → TRUE\n"
+"     * Check for: Protective frames on face, lenses over eyes, visor in front of face\n"
+"     * Look at: Bridge of nose, temples, forehead area\n"
+"     * IGNORE: Regular prescription glasses, sunglasses without side protection\n"
+"     * If person is facing away but wearing hardhat: Check for goggle straps or frame edges\n\n"
+"3. SAFETY VEST / HIGH-VISIBILITY CLOTHING:\n"
+"   - TYPES: Reflective vests, hi-vis jackets, coveralls with reflective strips, industrial uniforms\n"
+"   - APPEARANCE:\n"
+"     * Colors: Bright yellow, orange, lime green, red\n"
+"     * Features: Reflective strips/bands (silver, yellow), mesh or solid fabric\n"
+"     * Styles: Sleeveless vests, long-sleeve jackets, full coveralls with reflective elements\n"
+"   - DETECTION RULES:\n"
+"     * Any high-visibility outer garment with reflective strips → TRUE\n"
+"     * Industrial coveralls/uniforms in bright colors → TRUE\n"
+"     * Partial visibility (torso, shoulder, or back visible) → TRUE\n"
+"     * Look for: Reflective horizontal/vertical strips, bright base color\n\n"
+"4. GLOVES (Hand Protection):\n"
+"   - TYPES: Work gloves, rubber gloves, cut-resistant gloves, heat-resistant gloves\n"
+"   - APPEARANCE: Covering hands, fabric/leather/rubber material, fitted or loose\n"
+"   - DETECTION RULES:\n"
+"     * At least ONE gloved hand visible → TRUE\n"
+"     * Both hands must be checked if visible\n"
+"     * If only one hand in frame and gloved → TRUE\n"
+"     * Look for: Material texture, coverage of fingers/palm\n"
+"     * IGNORE: Bare hands, casual fashion gloves\n\n"
+"5. HARDHAT / SAFETY HELMET:\n"
+"   - APPEARANCE: Rigid protective helmet, dome shape, various colors (white, yellow, blue, orange, red)\n"
+"   - DETECTION RULES:\n"
+"     * Properly worn on head → TRUE\n"
+"     * Visible from any angle (front, side, back, top) → TRUE\n"
+"     * Look for: Hard shell, chin strap, brim edge\n"
+"     * IGNORE: Caps, baseball hats, beanies\n\n"
+"=== PERSON-CENTRIC PPE RULES ===\n"
+"- PPE must be WORN on a person (not carried, held, or placed nearby)\n"
+"- For EACH person detected, evaluate EACH PPE item independently\n"
+"- PARTIAL VISIBILITY COUNTS:\n"
+"  * One shoe visible (driver, seated, partially occluded) → shoes = TRUE\n"
+"  * Partial vest visible (shoulder, back, side) → safety_vest = TRUE\n"
+"  * One glove visible → gloves = TRUE\n"
+"  * Any angle of hardhat → hardhat = TRUE\n"
+"  * Any eye protection on face → goggles = TRUE\n\n"
+"=== VISIBILITY & CLARITY RULES ===\n"
+"- Object must be ≥40% visible (reduced from 50% to catch partial views)\n"
+"- Moderate blur is acceptable if object type is identifiable\n"
+"- If uncertain but object characteristics match PPE description → TRUE (reduce false negatives)\n"
+"- Extreme occlusion or complete blur → FALSE\n\n"
+"=== VEHICLE DETECTION GUIDELINES ===\n\n"
+"VEHICLE TYPES & APPEARANCE:\n"
+"- Bulldozer: Tracked vehicle, wide front blade, low profile\n"
+"- Excavator: Rotating body, long arm with bucket, tracks/wheels\n"
+"- Cement Mixer Truck: Large rotating drum on truck chassis\n"
+"- Mobile Concrete Mixer: Smaller site mixer with drum/chute\n"
+"- Crane: Extended boom, hook/cable system, lifting mechanism\n"
+"- Forklift: Two parallel forks, upright mast, compact design\n"
+"- Road Roller: Large cylindrical rollers, no regular wheels\n"
+"- Tractor: Large rear wheels, smaller front, open/enclosed cab\n"
+"- Dump Truck: Hydraulic tilting cargo bed on heavy truck chassis\n"
+"- Loader: Front bucket, articulated steering, wheeled or tracked\n"
+"- Grader: Long blade between axles for ground leveling\n"
+"- Cargo Truck: Standard truck with cabin and cargo bed/container\n\n"
+"VEHICLE COUNTING RULES:\n"
+"- Count only real, physical vehicles in the scene\n"
+"- Must be ≥50% visible to count\n"
+"- If ≥80% confident of specific type: Group by type {\"vehicle_type\": count}\n"
+"- If 50-79% confident or unclear type: Report as {\"Industrial Machinery\": count}\n"
+"- If <50% confident: Do not count at all\n"
+"- IGNORE: Toy vehicles, posters, screen displays, reflections\n\n"
+"=== NEGATIVE CONSTRAINTS ===\n"
+"DO NOT detect as PPE:\n"
+"- Caps, baseball hats, beanies\n"
+"- Regular sunglasses or prescription glasses\n"
+"- Casual clothing, hoodies, regular jackets\n"
+"- Sandals, slippers, casual sneakers, dress shoes\n"
+"- Fashion accessories\n\n"
+"=== OUTPUT FORMAT ===\n"
+"Return ONLY valid JSON with:\n"
+"{\n"
+"  \"hardhat\": boolean,\n"
+"  \"goggles\": boolean,\n"
+"  \"safety_vest\": boolean,\n"
+"  \"gloves\": boolean,\n"
+"  \"shoes\": boolean,\n"
+"  \"vehicles\": {\"vehicle_type\": count, ...}\n"
+"}\n\n"
+"CRITICAL: Prioritize TRUE positives for safety compliance.\n"
+"When in doubt about PPE presence (30-40% confidence) → lean toward TRUE.\n"
+"Better to flag potential PPE than miss safety equipment.\n\n"
+"No explanations. JSON only."
 )
 
 # =================================================
@@ -475,7 +544,8 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             response = await loop.run_in_executor(
                 None,
                 lambda: bedrock_client.invoke_model(
-                    modelId="amazon.nova-lite-v1:0",
+                   # modelId="amazon.nova-lite-v1:0",
+                    modelId="amazon.nova-pro-v1:0",
                     body=json.dumps(payload),
                     contentType="application/json",
                     accept="application/json"
@@ -1284,7 +1354,8 @@ async def test_gpt():
 
         # Call Bedrock
         response = bedrock_client.invoke_model(
-            modelId="amazon.nova-lite-v1:0",
+            # modelId="amazon.nova-lite-v1:0",
+            modelId="amazon.nova-pro-v1:0",
             body=json.dumps(payload),
             contentType="application/json",
             accept="application/json"
@@ -1716,7 +1787,7 @@ async def process_video(data: VideoInput):
         # Upload annotated video to S3 (same bucket)
         upload_video_start = time. time()
         base_name = os. path.splitext(object_key)[0]
-        output_key = f"{base_name}_annotated. mp4"
+        output_key = f"{base_name}_annotated.mp4"
 
         output_s3_uri = await upload_to_s3_async(
             temp_output_path,
