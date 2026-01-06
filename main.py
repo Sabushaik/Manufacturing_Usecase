@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
-from fastapi. responses import JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware. base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -26,8 +26,8 @@ import traceback
 
 import tritonclient.http as httpclient
 from tritonclient.http import InferInput, InferRequestedOutput
-from ultralytics. trackers. bot_sort import BOTSORT
-from ultralytics. engine. results import Boxes
+from ultralytics.trackers.bot_sort import BOTSORT
+from ultralytics.engine.results import Boxes
 from types import SimpleNamespace
 
 from dotenv import load_dotenv
@@ -36,7 +36,7 @@ load_dotenv()
 # LOGGING
 # =================================================
 logging.basicConfig(
-    level=logging. INFO,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ S3_BUCKET = os.getenv("S3_BUCKET_NAME")
 OUTPUT_S3_BUCKET = os.getenv("OUTPUT_S3_BUCKET_NAME")  # NEW
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os. getenv("AWS_REGION", "us-east-1")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 # Log AWS config status (without exposing secrets)
 logger.info(f"S3_BUCKET configured: {bool(S3_BUCKET)}")
@@ -383,8 +383,8 @@ def preprocess(frame):
     canvas = np.full((TARGET_SIZE, TARGET_SIZE, 3), PAD_VALUE, dtype=np.uint8)
     px = (TARGET_SIZE - nw) // 2
     py = (TARGET_SIZE - nh) // 2
-    canvas[py:py + nh, px: px + nw] = resized
-    img = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np. float32) / 255.0
+    canvas[py:py + nh, px:px + nw] = resized
+    img = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     img = np.transpose(img, (2, 0, 1))[None]
     return img, {
         "scale": scale, "pad_x": px, "pad_y": py,
@@ -393,7 +393,7 @@ def preprocess(frame):
 
 
 def get_color(cls_id):
-    np. random.seed(cls_id + 100)
+    np.random.seed(cls_id + 100)
     return tuple(int(c) for c in np.random.randint(50, 255, 3))
 
 
@@ -411,7 +411,7 @@ def get_vehicle_color():
 def load_sample_cache():
     """Load and encode sample images - same as notebook"""
     cache = {}
-    for key, paths in SAMPLES. items():
+    for key, paths in SAMPLES.items():
         cache[key] = []
         for p in paths:
             if os.path.exists(p):
