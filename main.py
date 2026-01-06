@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # =================================================
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        request. state.start_time = time.time()
+        request.state.start_time = time.time()
         response = await call_next(request)
         return response
 
@@ -457,11 +457,11 @@ def triton_infer(img, local_client=None):
     inp.set_data_from_numpy(img)
     out = InferRequestedOutput("output0")
     resp = client.infer(model_name=MODEL_NAME, inputs=[inp], outputs=[out])
-    return resp. as_numpy("output0")
+    return resp.as_numpy("output0")
 
 
 def postprocess(output, meta, allowed_cls:  set):
-    preds = output[0]. T
+    preds = output[0].T
     raw = []
     for p in preds: 
         cx, cy, w, h = p[: 4]
@@ -655,7 +655,7 @@ def convert_video_to_web_format(input_path:  str, output_path: str) -> bool:
             check=False
         )
 
-        if result.returncode == 0 and os.path. exists(output_path):
+        if result.returncode == 0 and os.path.exists(output_path):
             logger. info("✅ Video conversion successful")
             return True
         else: 
@@ -1501,7 +1501,7 @@ async def upload_video(
         except HTTPException: 
             raise
         except Exception as e: 
-            logger.error(f"Error saving file to temp:  {str(e)}\n{traceback. format_exc()}")
+            logger.error(f"Error saving file to temp:  {str(e)}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
         # Upload to S3
