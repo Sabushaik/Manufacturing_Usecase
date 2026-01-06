@@ -67,12 +67,15 @@ app.add_middleware(
 # AWS CONFIG
 # =================================================
 S3_BUCKET = os.getenv("S3_BUCKET_NAME")
+OUTPUT_S3_BUCKET = os.getenv("OUTPUT_S3_BUCKET_NAME")  # NEW
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os. getenv("AWS_REGION", "us-east-1")
 
 # Log AWS config status (without exposing secrets)
 logger.info(f"S3_BUCKET configured: {bool(S3_BUCKET)}")
+logger.info(f"INPUT S3_BUCKET: {S3_BUCKET}")
+logger.info(f"OUTPUT_S3_BUCKET: {OUTPUT_S3_BUCKET}")
 logger.info(f"AWS_ACCESS_KEY_ID configured: {bool(AWS_ACCESS_KEY_ID)}")
 logger.info(f"AWS_SECRET_ACCESS_KEY configured: {bool(AWS_SECRET_ACCESS_KEY)}")
 logger.info(f"AWS_REGION:  {AWS_REGION}")
@@ -176,7 +179,8 @@ HARDCODED_CONFIG = {
 # =================================================
 # GPT SYSTEM PROMPT (from Jupyter notebook)
 # =================================================
-SYSTEM_TEXT = ("You are a vision analysis system for industrial safety compliance.\n"
+SYSTEM_TEXT = (
+    "You are a vision analysis system for industrial safety compliance.\n"
 "Analyze images and return ONLY valid JSON.\n\n"
 "IMPORTANT:\n"
 "Use the PROVIDED SAMPLE IMAGES as visual guidance to understand\n"
@@ -264,7 +268,7 @@ SYSTEM_TEXT = ("You are a vision analysis system for industrial safety complianc
 "- Count only real, physical vehicles in the scene\n"
 "- Must be ≥50% visible to count\n"
 "- If ≥80% confident of specific type: Group by type {\"vehicle_type\": count}\n"
-"- If 50-79% confident or unclear type: Report as {\"Industrial Machinery\": count}\n"
+"- If 50-79% confident or unclear type: Report as {\"Industrial Equipment\": count}\n"
 "- If <50% confident: Do not count at all\n"
 "- IGNORE: Toy vehicles, posters, screen displays, reflections\n\n"
 "=== NEGATIVE CONSTRAINTS ===\n"
@@ -289,6 +293,8 @@ SYSTEM_TEXT = ("You are a vision analysis system for industrial safety complianc
 "Better to flag potential PPE than miss safety equipment.\n\n"
 "No explanations. JSON only."
 )
+
+
 
 # =================================================
 # PYDANTIC MODELS
@@ -544,8 +550,8 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             response = await loop.run_in_executor(
                 None,
                 lambda: bedrock_client.invoke_model(
-                   # modelId="amazon.nova-lite-v1:0",
-                    modelId="amazon.nova-pro-v1:0",
+                    modelId="amazon.nova-lite-v1:0",
+                    # modelId="amazon.nova-pro-v1:0",
                     body=json.dumps(payload),
                     contentType="application/json",
                     accept="application/json"
@@ -775,9 +781,9 @@ def process_video_with_gpt_pipeline(
     # Initialize trackers
     person_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
-        track_high_thresh=0.6,
-        track_low_thresh=0.3,
-        new_track_thresh=0.6,
+        track_high_thresh=0.65,
+        track_low_thresh=0.35,
+        new_track_thresh=0.65,
         track_buffer=300,
         match_thresh=0.65,
         fuse_score=True,
@@ -790,9 +796,9 @@ def process_video_with_gpt_pipeline(
 
     vehicle_tracker = BOTSORT(SimpleNamespace(
         tracker_type="botsort",
-        track_high_thresh=0.6,
-        track_low_thresh=0.3,
-        new_track_thresh=0.6,
+        track_high_thresh=0.65,
+        track_low_thresh=0.35,
+        new_track_thresh=0.65,
         track_buffer=300,
         match_thresh=0.65,
         fuse_score=True,
@@ -809,6 +815,7 @@ def process_video_with_gpt_pipeline(
         raise ValueError("Failed to open video file")
 
     fps = int(cap.get(cv2.CAP_PROP_FPS))
+    # fps=20
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -960,7 +967,7 @@ def process_video_with_gpt_pipeline(
                 "type": "vehicle",
                 "tid": int(final_vid),
                 "cls_id": -1,
-                "cls_name": "vehicle",
+                "cls_name": "Industrial Equipment",
                 "bbox": [to_py(x1), to_py(y1), to_py(x2), to_py(y2)],
                 "crop_path": crop_path
             })
@@ -1118,6 +1125,14 @@ def process_video_with_gpt_pipeline(
         final_vehicle_counts[dominant_label] += 1
         vehicle_label_map[tid] = dominant_label
 
+    # ✅ Ignore any Industrial / industrial / INDUSTRIAL*
+    unique_vehicles_filtered = sum(
+        1 for v in vehicle_label_map.values()
+        if not v.lower().startswith("industrial")
+    )
+
+
+
     logger.info(f"   Vehicle label map: {len(vehicle_label_map)} unique vehicle types identified")
 
     cap = cv2.VideoCapture(video_path)
@@ -1189,7 +1204,7 @@ def process_video_with_gpt_pipeline(
 
                 elif typ == "vehicle":
                     tid = item["tid"]
-                    draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "vehicle")
+                    draw_label = item.get("gpt_vehicle_label") or vehicle_label_map.get(tid, "Industrial Equipment")
                     display_label = draw_label.replace("_", " ").title()
                     
                     color = get_vehicle_color()
@@ -1226,7 +1241,9 @@ def process_video_with_gpt_pipeline(
 
     # Get unique counts
     unique_persons = len(person_active_ids)
-    unique_vehicles = len(vehicle_active_ids)
+    # unique_vehicles = len(vehicle_active_ids)
+    unique_vehicles = unique_vehicles_filtered
+
 
     # return {
     #     "json_output": json_output,
@@ -1354,8 +1371,8 @@ async def test_gpt():
 
         # Call Bedrock
         response = bedrock_client.invoke_model(
-            # modelId="amazon.nova-lite-v1:0",
-            modelId="amazon.nova-pro-v1:0",
+            modelId="amazon.nova-lite-v1:0",
+            # modelId="amazon.nova-pro-v1:0",
             body=json.dumps(payload),
             contentType="application/json",
             accept="application/json"
@@ -1791,10 +1808,11 @@ async def process_video(data: VideoInput):
 
         output_s3_uri = await upload_to_s3_async(
             temp_output_path,
-            bucket_name,
+            OUTPUT_S3_BUCKET,
             output_key,
             content_type='video/mp4'
         )
+
         timing["s3_upload_video_duration"] = time.time() - upload_video_start
         logger.info(f"✅ Annotated video uploaded in {timing['s3_upload_video_duration']:.2f}s")
 
@@ -1832,7 +1850,12 @@ async def process_video(data: VideoInput):
             }
 
             json_key = f"{base_name}_results.json"
-            json_s3_uri = await upload_json_to_s3(results_data, bucket_name, json_key)
+            json_s3_uri = await upload_json_to_s3(
+                    results_data,
+                    OUTPUT_S3_BUCKET,
+                    json_key
+                )
+
 
             timing["s3_upload_json_duration"] = time.time() - upload_json_start
             logger.info(f"✅ JSON uploaded in {timing['s3_upload_json_duration']:.2f}s")
@@ -1849,8 +1872,13 @@ async def process_video(data: VideoInput):
             shutil.rmtree(veh_crop_base_dir)
 
         # Generate presigned URLs
-        output_presigned_url = generate_presigned_url(bucket_name, output_key, expiration=86400)
-        json_presigned_url = generate_presigned_url(bucket_name, json_key, expiration=86400) if json_s3_uri else None
+        output_presigned_url = generate_presigned_url(
+            OUTPUT_S3_BUCKET, output_key, 86400
+        )
+        json_presigned_url = generate_presigned_url(
+            OUTPUT_S3_BUCKET, json_key, 86400
+        )
+
 
         timing["total_duration"] = time.time() - overall_start
 
