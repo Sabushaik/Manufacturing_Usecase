@@ -1222,14 +1222,14 @@ def process_video_with_gpt_pipeline(
 
             # Create crop once per second
             crop_path = None
-            if frame_idx - last_crop_frame. get(("person", final_id), -fps) >= fps:
+            if frame_idx - last_crop_frame.get(("person", final_id), -fps) >= fps:
                 xi1, yi1 = max(0, int(x1)), max(0, int(y1))
                 xi2, yi2 = min(W, int(x2)), min(H, int(y2))
                 if xi2 > xi1 and yi2 > yi1:
                     crop = frame[yi1:yi2, xi1:xi2]
                     person_dir = os.path.join(crop_base_dir, f"person_{final_id}")
                     os.makedirs(person_dir, exist_ok=True)
-                    crop_path = os. path.join(person_dir, f"sec_{frame_idx // fps}.jpg")
+                    crop_path = os.path.join(person_dir, f"sec_{frame_idx // fps}.jpg")
                     cv2.imwrite(crop_path, crop)
                     last_crop_frame[("person", final_id)] = frame_idx
 
@@ -1277,7 +1277,7 @@ def process_video_with_gpt_pipeline(
                     cv2.imwrite(crop_path, crop)
                     last_crop_frame[("veh", final_vid)] = frame_idx
 
-            json_output. append({
+            json_output.append({
                 "frame_id": int(frame_idx),
                 "type": "vehicle",
                 "tid": int(final_vid),
@@ -1732,7 +1732,7 @@ async def upload_video(
     start_time = time.time()
 
     print(f"\n{'=' * 80}")
-    print(f"🚀 UPLOAD API INVOKED at:  {api_start_time. isoformat()}")
+    print(f"🚀 UPLOAD API INVOKED at:  {api_start_time.isoformat()}")
     print(f"{'=' * 80}\n")
 
     # Get middleware timing if available
@@ -1944,13 +1944,13 @@ def parse_presigned_url(presigned_url: str) -> tuple:
     path = unquote(parsed. path)
 
     # Format: bucket.s3.amazonaws.com (no region - YOUR CASE)
-    if hostname. endswith('.s3.amazonaws.com'):
-        bucket = hostname. replace('.s3.amazonaws.com', '')
-        key = path. lstrip('/')
+    if hostname.endswith('.s3.amazonaws.com'):
+        bucket = hostname.replace('.s3.amazonaws.com', '')
+        key = path.lstrip('/')
         return bucket, key
 
     # Format: bucket.s3.region.amazonaws.com (with region)
-    if '. s3.' in hostname and hostname.endswith('. amazonaws.com'):
+    if '.s3.' in hostname and hostname.endswith('.amazonaws.com'):
         bucket = hostname.split('.s3.')[0]
         key = path.lstrip('/')
         return bucket, key
@@ -1964,13 +1964,13 @@ def parse_presigned_url(presigned_url: str) -> tuple:
 
     # Format: s3.region.amazonaws.com/bucket/key (path style, with region)
     if hostname.startswith('s3.') and hostname.endswith('.amazonaws.com'):
-        path_parts = path. lstrip('/').split('/', 1)
+        path_parts = path.lstrip('/').split('/', 1)
         bucket = path_parts[0]
         key = path_parts[1] if len(path_parts) > 1 else ''
         return bucket, key
 
     # Format: bucket.s3-accelerate.amazonaws.com
-    if '. s3-accelerate. amazonaws.com' in hostname:
+    if '. s3-accelerate.amazonaws.com' in hostname:
         bucket = hostname.replace('.s3-accelerate.amazonaws.com', '')
         key = path.lstrip('/')
         return bucket, key
@@ -1988,9 +1988,9 @@ async def download_from_presigned_url(presigned_url: str, dest_path: str) -> Non
                     status_code=403,
                     detail="Presigned URL expired or access denied"
                 )
-            if response. status != 200:
+            if response.status != 200:
                 raise HTTPException(
-                    status_code=response. status,
+                    status_code=response.status,
                     detail=f"Failed to download from presigned URL: {response.reason}"
                 )
 
@@ -2003,7 +2003,7 @@ def detect_input_type(uri: str) -> str:
     """Detect whether input is S3 URI or presigned URL"""
     if uri.startswith('s3://'):
         return 's3_uri'
-    elif uri.startswith('https://') and 's3' in uri. lower():
+    elif uri.startswith('https://') and 's3' in uri.lower():
         return 'presigned_url'
     else:
         raise ValueError("Unknown URI format.  Must be s3:// or https: // presigned URL")
@@ -2012,7 +2012,7 @@ def detect_input_type(uri: str) -> str:
 @app.post("/process-video")
 async def process_video(data: VideoInput):
     """Process video with YOLO detection + Bedrock Nova Lite Vision for PPE/Vehicle classification"""
-    api_start_time = datetime. now()
+    api_start_time = datetime.now()
     overall_start = time.time()
 
     print(f"\n{'=' * 80}")
@@ -2044,7 +2044,7 @@ async def process_video(data: VideoInput):
         if s3_client is None:
             raise HTTPException(status_code=500, detail="S3 client not initialized")
 
-        video_uri = data. video_uri
+        video_uri = data.video_uri
         input_type = detect_input_type(video_uri)
 
         # Parse bucket and key based on input type
@@ -2064,7 +2064,7 @@ async def process_video(data: VideoInput):
         logger.info(f"📥 Downloading video...")
         download_start = time.time()
 
-        temp_video_path = tempfile. NamedTemporaryFile(delete=False, suffix=". mp4").name
+        temp_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         if input_type == 's3_uri':
             await asyncio.get_event_loop().run_in_executor(
@@ -2083,11 +2083,11 @@ async def process_video(data: VideoInput):
         # Create temp directories for crops
         crop_base_dir = tempfile.mkdtemp(prefix="person_crops_")
         veh_crop_base_dir = tempfile.mkdtemp(prefix="vehicle_crops_")
-        temp_output_path = tempfile. NamedTemporaryFile(delete=False, suffix=".mp4").name
+        temp_output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         # Process video
         logger.info("🚀 Starting YOLO + Bedrock Nova Lite Vision pipeline...")
-        processing_start = time. time()
+        processing_start = time.time()
 
         loop = asyncio.get_event_loop()
         processing_results = await loop.run_in_executor(
@@ -2103,14 +2103,14 @@ async def process_video(data: VideoInput):
         logger.info(f"✅ Processing completed in {timing['processing_duration']:.2f}s")
 
         # Convert to web format
-        conversion_start = time. time()
+        conversion_start = time.time()
         temp_converted_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         if convert_video_to_web_format(temp_output_path, temp_converted_path):
             os.remove(temp_output_path)
             temp_output_path = temp_converted_path
             temp_converted_path = None
-            timing["video_conversion_duration"] = time. time() - conversion_start
+            timing["video_conversion_duration"] = time.time() - conversion_start
             logger.info(f"✅ Video conversion completed in {timing['video_conversion_duration']:.2f}s")
         else:
             logger.warning("⚠️ Using original video (conversion failed/skipped)")
@@ -2119,7 +2119,7 @@ async def process_video(data: VideoInput):
                 temp_converted_path = None
 
         # Upload annotated video to S3 (same bucket)
-        upload_video_start = time. time()
+        upload_video_start = time.time()
         base_name = os. path.splitext(object_key)[0]
         output_key = f"{base_name}_annotated.mp4"
 
@@ -2144,7 +2144,7 @@ async def process_video(data: VideoInput):
                     "input_uri": video_uri,
                     "input_type": input_type,
                     "output_s3_uri": output_s3_uri,
-                    "processed_at": datetime. now().isoformat(),
+                    "processed_at": datetime.now().isoformat(),
                     "total_frames": processing_results["total_frames"],
                     "duration_seconds": processing_results["video_metadata"]["duration"]
                 },
