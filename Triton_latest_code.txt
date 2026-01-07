@@ -507,9 +507,9 @@ def get_image_format_and_base64(image_b64: str) -> tuple:
     # The base64 string is passed through as-is
     return "jpeg", image_b64
 
-async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count: int = 3) -> PPEAndVehicleStatus:
+async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count: int = 3, modelId: str = "amazon.nova-lite-v1:0") -> PPEAndVehicleStatus:
     """
-    Call Amazon Bedrock Nova Lite model for vision analysis.
+    Call Amazon Bedrock Nova model for vision analysis.
     Uses the same interface as the original GPT call for compatibility.
     Note: 'client' parameter is unused but kept for backward compatibility.
     """
@@ -534,7 +534,7 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
     last_err = None
     for attempt in range(retry_count):
         try:
-            # Build Nova Lite payload according to Bedrock format
+            # Build Nova payload according to Bedrock format
             payload = {
                 "messages": [
                     {
@@ -559,8 +559,7 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             response = await loop.run_in_executor(
                 None,
                 lambda: bedrock_client.invoke_model(
-                    modelId="amazon.nova-lite-v1:0",
-                    # modelId="amazon.nova-pro-v1:0",
+                    modelId=modelId,
                     body=json.dumps(payload),
                     contentType="application/json",
                     accept="application/json"
@@ -607,9 +606,9 @@ async def call_gpt_single(client: httpx.AsyncClient, image_b64: str, retry_count
             raise RuntimeError(f"Bedrock call failed after {retry_count} attempts: {last_err}")
 
     raise RuntimeError(f"Bedrock call failed: {last_err}")
-async def process_crops_async(crop_paths: List[str]) -> List[Dict]:
+async def process_crops_async(crop_paths: List[str], modelId: str = "amazon.nova-lite-v1:0") -> List[Dict]:
     """
-    Process crops through Bedrock Nova Lite with concurrency limit.
+    Process crops through Bedrock Nova model with concurrency limit.
     Requires AWS credentials to be set with Bedrock access.
     """
 
@@ -621,7 +620,7 @@ async def process_crops_async(crop_paths: List[str]) -> List[Dict]:
             async with semaphore:
                 try:
                     b64 = encode_image(path)
-                    pred = await call_gpt_single(client, b64)
+                    pred = await call_gpt_single(client, b64, modelId=modelId)
                     results[idx] = pred.model_dump()
                 except Exception as e:
                     logger.error(f"Error processing crop {path}: {e}")
@@ -1077,10 +1076,11 @@ def process_video_with_gpt_pipeline(
     video_path: str,
     output_video_path: str,
     crop_base_dir: str,
-    veh_crop_base_dir: str
+    veh_crop_base_dir: str,
+    modelId: str = "amazon.nova-lite-v1:0"
 ) -> Dict[str, Any]:
     """
-    Main processing pipeline combining Triton detection + BOTSORT tracking + Bedrock Nova Lite Vision
+    Main processing pipeline combining Triton detection + BOTSORT tracking + Bedrock Nova Vision
     """
     timings = {
         "detection_tracking_total": 0.0,
@@ -1303,9 +1303,9 @@ def process_video_with_gpt_pipeline(
     logger.info(f"✅ Phase 1 complete: {len(json_output)} detections, {len(person_active_ids)} persons, {len(vehicle_active_ids)} vehicles")
 
     # =================================================
-    # PHASE 2: Bedrock Nova Lite Vision Analysis
+    # PHASE 2: Bedrock Nova Vision Analysis
     # =================================================
-    logger.info("🤖 Phase 2: Bedrock Nova Lite Vision Analysis...")
+    logger.info(f"🤖 Phase 2: Bedrock Nova Vision Analysis (Model: {modelId})...")
     gpt_start = time.time()
 
     # Collect all crops
@@ -1317,13 +1317,13 @@ def process_video_with_gpt_pipeline(
             crop_idx_map.append(i)
             crops_to_process.append(cp)
 
-    logger.info(f"   Processing {len(crops_to_process)} crops through Bedrock Nova Lite...")
+    logger.info(f"   Processing {len(crops_to_process)} crops through Bedrock Nova...")
 
     # Process crops asynchronously
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        gpt_results = loop.run_until_complete(process_crops_async(crops_to_process))
+        gpt_results = loop.run_until_complete(process_crops_async(crops_to_process, modelId=modelId))
     finally:
         loop.close()
 
@@ -1606,16 +1606,17 @@ def process_video_with_gpt_pipeline(
 @app.get("/")
 def read_root():
     return {
-        "message":  "PPE Detection API with YOLO + Bedrock Nova Lite Vision Pipeline",
+        "message":  "PPE Detection API with YOLO + Bedrock Nova Vision Pipeline",
         "triton_connected": triton_client is not None,
         "triton_server":  TRITON_URL,
         "model_name": MODEL_NAME,
-        "vision_model":  "amazon.nova-lite-v1:0",
+        "vision_model_default":  "amazon.nova-lite-v1:0",
         "vision_provider": "Amazon Bedrock",
         "input_size": TARGET_SIZE,
         "s3_bucket": S3_BUCKET,
         "s3_configured": bool(S3_BUCKET and AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY),
-        "bedrock_configured": bedrock_client is not None
+        "bedrock_configured": bedrock_client is not None,
+        "note": "Vision model can be specified via 'modelId' parameter in /process-video endpoint"
     }
 
 
@@ -1647,7 +1648,7 @@ def health_check():
         "triton_healthy": triton_healthy,
         "triton_server":  TRITON_URL,
         "model_name": MODEL_NAME,
-        "vision_model": "amazon.nova-lite-v1:0",
+        "vision_model_default": "amazon.nova-lite-v1:0",
         "vision_provider": "Amazon Bedrock",
         "bedrock_connected": bedrock_healthy
     }
@@ -1922,6 +1923,7 @@ import aiohttp
 class VideoInput(BaseModel):
     """Accept either S3 URI or Presigned URL"""
     video_uri: str
+    modelId: Optional[str] = "amazon.nova-lite-v1:0"
 
     @validator('video_uri')
     def validate_uri(cls, v):
@@ -2019,12 +2021,13 @@ def detect_input_type(uri: str) -> str:
 
 @app.post("/process-video")
 async def process_video(data: VideoInput):
-    """Process video with YOLO detection + Bedrock Nova Lite Vision for PPE/Vehicle classification"""
+    """Process video with YOLO detection + Bedrock Nova Vision for PPE/Vehicle classification"""
     api_start_time = datetime.now()
     overall_start = time.time()
 
     print(f"\n{'=' * 80}")
     print(f"🚀 PROCESS API INVOKED at:  {api_start_time.isoformat()}")
+    print(f"   Model ID: {data.modelId}")
     print(f"{'=' * 80}\n")
 
     timing = {
@@ -2053,6 +2056,7 @@ async def process_video(data: VideoInput):
             raise HTTPException(status_code=500, detail="S3 client not initialized")
 
         video_uri = data.video_uri
+        modelId = data.modelId
         input_type = detect_input_type(video_uri)
 
         # Parse bucket and key based on input type
@@ -2067,6 +2071,7 @@ async def process_video(data: VideoInput):
                 raise HTTPException(status_code=400, detail=str(e))
 
         logger.info(f"📦 Bucket: {bucket_name}, Key: {object_key}")
+        logger.info(f"🤖 Using model: {modelId}")
 
         # Download from S3 or presigned URL
         logger.info(f"📥 Downloading video...")
@@ -2094,7 +2099,7 @@ async def process_video(data: VideoInput):
         temp_output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
         # Process video
-        logger.info("🚀 Starting YOLO + Bedrock Nova Lite Vision pipeline...")
+        logger.info(f"🚀 Starting YOLO + Bedrock Nova Vision pipeline (Model: {modelId})...")
         processing_start = time.time()
 
         loop = asyncio.get_event_loop()
@@ -2104,7 +2109,8 @@ async def process_video(data: VideoInput):
             temp_video_path,
             temp_output_path,
             crop_base_dir,
-            veh_crop_base_dir
+            veh_crop_base_dir,
+            modelId
         )
 
         timing["processing_duration"] = time.time() - processing_start
@@ -2166,7 +2172,7 @@ async def process_video(data: VideoInput):
                 "config": {
                     "model_name": MODEL_NAME,
                     "triton_server": TRITON_URL,
-                    "vision_model": "amazon.nova-lite-v1:0",
+                    "vision_model": modelId,
                     "vision_provider": "Amazon Bedrock",
                     "confidence_threshold":  CONF_THRESH,
                     "iou_threshold":  IOU_THRESHOLD
@@ -2280,7 +2286,7 @@ async def process_video(data: VideoInput):
         return JSONResponse(
             status_code=200,
             content={
-                "message": "Successfully processed video with YOLO + Bedrock Nova Lite Vision pipeline",
+                "message": "Successfully processed video with YOLO + Bedrock Nova Vision pipeline",
                 "input_uri": video_uri,
                 "input_type": input_type,
                 "output_s3_uri": output_s3_uri,
@@ -2293,7 +2299,7 @@ async def process_video(data: VideoInput):
                 "config": {
                     "model_name": MODEL_NAME,
                     "triton_server": TRITON_URL,
-                    "vision_model":  "amazon.nova-lite-v1:0",
+                    "vision_model":  modelId,
                     "vision_provider":  "Amazon Bedrock",
                     "confidence_threshold":  CONF_THRESH,
                     "iou_threshold": IOU_THRESHOLD
