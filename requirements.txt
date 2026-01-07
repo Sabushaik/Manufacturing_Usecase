@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-multipart
+boto3
+botocore
+pillow
+opencv-python
+python-dotenv
+httpx
+numpy
+tritonclient[http]
+ultralytics
+pydantic
+reportlab
+matplotlib
+aiohttp
