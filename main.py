@@ -2026,6 +2026,8 @@ async def process_video(data: VideoInput):
         "video_conversion_duration": 0,
         "s3_upload_video_duration": 0,
         "s3_upload_json_duration": 0,
+        "pdf_generation_duration": 0,
+        "s3_upload_pdf_duration": 0,
         "total_duration": 0
     }
 
